@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -477,12 +478,17 @@ fn excerpt(text: &str, limit: usize) -> String {
     value
 }
 
+// 仅毫秒 + 进程 ID 不够:同进程并发的 run_command(如并行测试)会在同一毫秒
+// 拿到相同目录,互相截断日志文件并提前删除对方的目录,导致 stdout 采集为空。
+static LOG_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn unique_suffix() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
-    format!("{millis}-{}", std::process::id())
+    let sequence = LOG_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{millis}-{}-{sequence}", std::process::id())
 }
 
 fn display_path(path: &Path) -> String {
