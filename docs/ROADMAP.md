@@ -33,12 +33,13 @@
 
 ### 1.4 接手时已知小缺陷清单(Phase 0 输入)
 
-- `strip_inline_markdown` 把 `[文字](url)` 处理成 `文字(url)`(`src/requirements.rs`)。
-- 页面探测不支持 https、不跟随重定向、只探测单页面(`src/browser.rs`)。
-- 只有 lib 单元测试,没有 CLI 集成测试和 JSON 快照测试。
+- ~~`strip_inline_markdown` 把 `[文字](url)` 处理成 `文字(url)`~~(已修复,2026-07-06)。
+- 页面探测不支持 https、不跟随重定向、只探测单页面(`src/browser.rs`)——归入 1.1 reqwest 改造。
+- ~~只有 lib 单元测试,没有 CLI 集成测试和 JSON 快照测试~~(已补齐,2026-07-06)。
 - 本机 vswhere 不可用,依赖 `scripts/cargo-msvc.ps1`(仅本机问题,CI 标准 runner 不受影响)。
 - 脚本链 Windows-only。
-- 换行符未通过 `.gitattributes` 归一化。
+- ~~换行符未通过 `.gitattributes` 归一化~~(已修复,2026-07-06)。
+- launch 超时 kill 只终止直接子进程,进程树中的孙进程泄漏(runtime 超时测试中可直接观察到)——彻底修复在 1.6 Job Object / 进程组。
 
 ## 2. 战略原则
 
@@ -52,12 +53,12 @@
 
 | 编号 | 任务 | 具体落实 | 状态 |
 | --- | --- | --- | --- |
-| 0.1 | 建立提交历史 | 首次 commit 固化接手基线;分支 `main`;之后按 Conventional Commits(`feat:`/`fix:`/`docs:`/`chore:`)提交;bin 项目提交 Cargo.lock;推送 GitHub 私仓做异地备份 | 本地已完成(2026-07-06),待建远程仓库 |
-| 0.2 | CI | GitHub Actions:`windows-latest` + `ubuntu-latest` 矩阵,跑 `cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`。标准 runner 自带 MSVC,不需要 cargo-msvc.ps1 | 待办 |
-| 0.3 | 测试基建 | 引入 `assert_cmd` + `predicates` 为每个子命令写至少一个端到端用例;引入 `insta` 快照测试锁定 `--json` 输出结构,防止重构悄悄破坏机器可读接口 | 待办 |
-| 0.4 | 小缺陷修复 | 修 `strip_inline_markdown` 链接处理;launch 临时语义修补:超时但已产生输出的进程标记 `long_running` 而非失败(彻底修复在 1.6);加 `.gitattributes` 归一化换行 | 部分完成(.gitattributes) |
+| 0.1 | 建立提交历史 | 首次 commit 固化接手基线;分支 `main`;之后按 Conventional Commits(`feat:`/`fix:`/`docs:`/`chore:`)提交;bin 项目提交 Cargo.lock;推送 GitHub 远程仓库做异地备份 | 已完成(2026-07-06,远程 `github.com/pxgt/Rust_Final_job`) |
+| 0.2 | CI | GitHub Actions:`windows-latest` + `ubuntu-latest` 矩阵,跑 `cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`。标准 runner 自带 MSVC,不需要 cargo-msvc.ps1 | 已完成(2026-07-06,`.github/workflows/ci.yml`) |
+| 0.3 | 测试基建 | 引入 `assert_cmd` 为每个子命令写端到端用例;引入 `insta` 快照测试锁定 `--json` 输出结构,防止重构悄悄破坏机器可读接口 | 已完成(2026-07-06,7 个 CLI 集成测试 + requirements JSON 快照) |
+| 0.4 | 小缺陷修复 | 修 `strip_inline_markdown` 链接处理;launch 临时语义修补:超时但已产生输出的进程标记 `long_running` 而非失败(彻底修复在 1.6);加 `.gitattributes` 归一化换行 | 已完成(2026-07-06;https 探测支持归入 1.1 reqwest 改造) |
 
-**验收门**:CI 双平台绿灯;`cargo test` 含集成测试全过。
+**验收门**:CI 双平台绿灯;`cargo test` 含集成测试全过。——本地已全过(32 单测 + 7 集成),CI 绿灯待首次远程构建确认。
 
 ## 4. Phase 1 — 核心闭环真实化(3~4 周,决定成败)
 
