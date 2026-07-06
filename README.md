@@ -1,27 +1,37 @@
 # SpecProbe
 
-SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的可扩展智能审查、自动化测试与缺陷诊断平台。
+SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能审查、自动化测试与缺陷诊断工具。
 
-项目目标是把宽泛的产品要求转换为可验证的验收标准和可执行测试，通过真实运行证据发现功能缺失、运行错误和交互问题，再由 AI 生成可追踪的缺陷解释与修改建议。所有修改都需要用户审批。
+它把宽泛的产品要求转换为可验证的验收标准和测试计划,通过真实运行被测项目采集证据(进程日志、HTTP 响应等),生成带证据链的问题清单与可审批的修复提案。核心原则:AI 负责理解和推理,确定性程序负责执行与取证,用户保留最终修改权。
 
-平台在设计上不限定项目语言、框架或交互形态。课程版本优先实现 Web 项目适配器和浏览器测试执行器，后续可以扩展到命令行程序、后端服务、桌面应用和移动应用。
+项目起源于 Rust 课程大作业(0.8.0 完成课程阶段交付),现已按产品化目标推进,完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-## 当前能力
+## 当前能力(0.8.0)
 
-- `specprobe doctor`：检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
-- `specprobe scan <PATH>`：识别项目技术栈、需求文档、源码语言及测试文件。
-- `specprobe requirements <PATH>`：解析 Markdown/TXT 需求文档，生成需求、验收标准和初始测试计划。
-- `specprobe ai <PATH>`：通过 AI Provider 对需求解析结果生成改进建议。默认 Mock Provider 不需要 API key。
-- `specprobe launch <PATH>`：识别项目启动命令，受控运行并采集 stdout、stderr、退出码和耗时。
-- `specprobe browser <PATH>`：把测试计划转换为浏览器动作计划，并可对本地 `http://` 页面采集状态码、标题和正文摘要。
-- `specprobe review <PATH>`：汇总需求质量、项目启动和浏览器证据，生成带审批状态的问题清单。
-- `specprobe propose <PATH>`：把问题清单转换为可审批的修复提案、补丁预览和回归检查清单。
-- `scripts/run-demo.ps1`：在 FocusBoard 故障注入项目上运行完整课程演示并归档 JSON 报告。
-- 以上命令均支持 `--json`，供后续 AI 工作流读取。
+- `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
+- `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
+- `specprobe requirements <PATH>`:解析 Markdown/TXT 需求文档,生成需求、验收标准和初始测试计划(基于关键词规则)。
+- `specprobe ai <PATH>`:对需求解析结果生成改进建议(当前仅离线 Mock Provider 可用,基于确定性规则)。
+- `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
+- `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对本地 `http://` 页面采集状态码、标题和正文摘要。
+- `specprobe review <PATH>`:汇总需求质量、项目启动和页面探测证据,生成带审批状态的问题清单。
+- `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
+- 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
+
+## 当前边界(如实声明)
+
+以下能力**尚未实现**,是路线图 Phase 1 的核心工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
+
+- 真实大语言模型调用:OpenAI 兼容与 Ollama Provider 目前只有配置检查,无 HTTP 传输。
+- 真实浏览器自动化:当前"浏览器执行器"只做单页面 HTTP 探测(仅 `http://`),不执行点击、输入、DOM 断言、截图和 console/网络采集。
+- 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
+- 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
+
+在 FocusBoard 基准(5 个注入缺陷)上,当前版本自动检出 1/5,详见 [docs/EXPERIMENT.md](docs/EXPERIMENT.md)。
 
 ## 本地运行
 
-这台开发机需要先加载 Visual Studio C++ 环境：
+标准环境直接使用 Cargo;本开发机的 Visual Studio 未注册 vswhere,需要通过包装脚本加载 MSVC 环境:
 
 ```powershell
 .\scripts\cargo-msvc.ps1 run -- doctor
@@ -37,13 +47,13 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的可扩
 .\scripts\cargo-msvc.ps1 --% clippy --all-targets -- -D warnings
 ```
 
-`review` 和 `propose` 默认进行计划级审查，不主动执行被测项目；需要真实启动和页面探测时添加 `--execute`。当前修复提案只生成预览和回归检查，不自动修改用户代码。真实云端模型调用和 Playwright 深度浏览器自动化会在后续接入。当前已预留 OpenAI 兼容 Provider 和 Ollama Provider 的配置入口；Mock Provider 可用于离线演示和单元测试。
+`review` 和 `propose` 默认进行计划级审查,不主动执行被测项目;需要真实启动和页面探测时添加 `--execute`。
 
-## 课程演示资料
+## 文档索引
 
-- [课堂演示指南](docs/DEMO_GUIDE.md)
-- [实验评估记录](docs/EXPERIMENT.md)
-- [课程报告初稿](docs/COURSE_REPORT.md)
-- [FocusBoard 故障注入项目](demo/buggy-task-board/README.md)
-
-项目的详细状态、设计决策和开发记录见 [PROJECT.md](PROJECT.md)。
+- [产品化路线图](docs/ROADMAP.md) — 当前有效的前瞻规划
+- [项目台账与开发日志](PROJECT.md)
+- [FocusBoard 基准测试项目](demo/buggy-task-board/README.md) — 含 5 个注入缺陷的判分基准
+- [实验评估记录](docs/EXPERIMENT.md) — 课程阶段基线数据(1/5 检出)
+- [课堂演示指南](docs/DEMO_GUIDE.md) — 课程阶段历史文档
+- [课程报告初稿](docs/COURSE_REPORT.md) — 课程阶段历史文档

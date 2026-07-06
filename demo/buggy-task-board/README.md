@@ -1,6 +1,8 @@
 # FocusBoard 演示项目
 
-FocusBoard 是 SpecProbe M8 阶段使用的故障注入 Web 项目。它使用 Node.js 内置 HTTP 模块运行，不需要安装第三方依赖。
+FocusBoard 是 SpecProbe 的故障注入基准测试项目（起源于课程 M8 阶段的演示项目）。它使用 Node.js 内置 HTTP 模块运行，不需要安装第三方依赖。
+
+自 2026-07-06 起，本项目升级为 SpecProbe 的**基准测试集**：`KNOWN_ISSUES.md` 中的 5 个注入缺陷是判分答案，[ROADMAP](../../docs/ROADMAP.md) 各阶段验收门以其检出率量化（接手基线 1/5）。
 
 ## 启动
 

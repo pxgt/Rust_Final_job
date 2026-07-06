@@ -1,5 +1,7 @@
 # SpecProbe 课堂演示指南
 
+> 课程阶段（0.8.0）历史文档，操作步骤仍可复现。接手后的项目规划见 [ROADMAP.md](ROADMAP.md)。
+
 ## 1. 演示目标
 
 用 FocusBoard 故障注入项目展示 SpecProbe 如何完成以下闭环：
