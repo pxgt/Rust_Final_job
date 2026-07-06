@@ -1,5 +1,6 @@
 use anyhow::Result;
 
-fn main() -> Result<()> {
-    specprobe::run()
+#[tokio::main]
+async fn main() -> Result<()> {
+    specprobe::run().await
 }

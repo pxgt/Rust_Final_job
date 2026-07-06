@@ -206,7 +206,7 @@ struct IssueDraft {
     recommendation: String,
 }
 
-pub fn generate_review_report(
+pub async fn generate_review_report(
     requirements_path: &Path,
     options: ReviewOptions,
 ) -> Result<ReviewReport, ReviewError> {
@@ -240,7 +240,8 @@ pub fn generate_review_report(
             &options.project_path,
             options.launch_timeout_secs,
             !options.execute,
-        );
+        )
+        .await;
         collect_launch_evidence(&mut builder, launch)
     };
 
@@ -260,7 +261,8 @@ pub fn generate_review_report(
             &options.base_url,
             options.browser_timeout_secs,
             !options.execute,
-        );
+        )
+        .await;
         collect_browser_evidence(&mut builder, browser)
     };
 
@@ -767,8 +769,8 @@ mod tests {
         ApprovalState, IssueCategory, IssueSeverity, ReviewOptions, generate_review_report,
     };
 
-    #[test]
-    fn review_report_includes_requirement_quality_issue() {
+    #[tokio::test]
+    async fn review_report_includes_requirement_quality_issue() {
         let root = temp_project("specprobe-review-quality");
         let requirements = root.join("PRD.md");
         fs::write(&requirements, "- 页面应该简单友好。").expect("write requirements");
@@ -785,6 +787,7 @@ mod tests {
                 browser_timeout_secs: 1,
             },
         )
+        .await
         .expect("review succeeds");
 
         assert_eq!(report.summary.requirements, 1);
@@ -796,8 +799,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn browser_probe_failure_becomes_issue_when_executed() {
+    #[tokio::test]
+    async fn browser_probe_failure_becomes_issue_when_executed() {
         let root = temp_project("specprobe-review-browser");
         let requirements = root.join("PRD.md");
         fs::write(&requirements, "- 页面必须显示首页标题。").expect("write requirements");
@@ -814,6 +817,7 @@ mod tests {
                 browser_timeout_secs: 1,
             },
         )
+        .await
         .expect("review succeeds");
 
         assert!(report.browser_report.is_some());

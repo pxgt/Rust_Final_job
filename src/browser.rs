@@ -1,6 +1,4 @@
 use std::fmt;
-use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -19,11 +17,13 @@ pub enum BrowserError {
     Requirements(#[from] RequirementError),
     #[error("browser base URL is not supported: {0}")]
     UnsupportedUrl(String),
-    #[error("failed to connect to {target}: {source}")]
-    Io {
+    #[error("failed to build the probe client: {0}")]
+    Client(#[source] reqwest::Error),
+    #[error("failed to probe {target}: {source}")]
+    Probe {
         target: String,
         #[source]
-        source: io::Error,
+        source: reqwest::Error,
     },
 }
 
@@ -103,14 +103,7 @@ pub enum BrowserDiagnosticSeverity {
     Error,
 }
 
-struct HttpUrl {
-    original: String,
-    host: String,
-    port: u16,
-    path: String,
-}
-
-pub fn run_browser_plan(
+pub async fn run_browser_plan(
     requirements_path: &Path,
     base_url: &str,
     timeout_secs: u64,
@@ -152,7 +145,7 @@ pub fn run_browser_plan(
     }
 
     let start = Instant::now();
-    let probe = probe_http_page(base_url, timeout_secs);
+    let probe = probe_http_page(base_url, timeout_secs).await;
     let duration_ms = start.elapsed().as_millis();
 
     match probe {
@@ -280,107 +273,49 @@ fn action_input_for_case(case: &crate::requirements::TestCase) -> Option<String>
         .and_then(|step| step.input.clone())
 }
 
-fn probe_http_page(url: &str, timeout_secs: u64) -> Result<PageProbeEvidence, BrowserError> {
-    let parsed = parse_http_url(url)?;
-    let timeout = Duration::from_secs(timeout_secs.max(1));
-    let address = (parsed.host.as_str(), parsed.port)
-        .to_socket_addrs()
-        .map_err(|source| BrowserError::Io {
-            target: parsed.original.clone(),
-            source,
-        })?
-        .next()
-        .ok_or_else(|| BrowserError::UnsupportedUrl(parsed.original.clone()))?;
-    let mut stream =
-        TcpStream::connect_timeout(&address, timeout).map_err(|source| BrowserError::Io {
-            target: parsed.original.clone(),
-            source,
-        })?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
-
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: specprobe/{}\r\nAccept: text/html,*/*\r\nConnection: close\r\n\r\n",
-        parsed.path,
-        parsed.host,
-        env!("CARGO_PKG_VERSION")
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|source| BrowserError::Io {
-            target: parsed.original.clone(),
-            source,
-        })?;
-
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|source| BrowserError::Io {
-            target: parsed.original.clone(),
-            source,
-        })?;
-    let response_text = String::from_utf8_lossy(&response);
-    let (head, body) = split_http_response(&response_text);
-    let decoded_body = if head
-        .to_ascii_lowercase()
-        .contains("transfer-encoding: chunked")
-    {
-        decode_chunked_body(body).unwrap_or_else(|| body.to_owned())
-    } else {
-        body.to_owned()
-    };
-    let status_line = head.lines().next().unwrap_or_default().to_owned();
-    let status_code = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|value| value.parse::<u16>().ok());
-
-    Ok(PageProbeEvidence {
-        url: parsed.original,
-        status_code,
-        status_text: status_line,
-        title: extract_title(&decoded_body),
-        body_excerpt: excerpt(decoded_body.trim(), BODY_EXCERPT_LIMIT),
-        response_bytes: response.len(),
-    })
+/// 探测只支持 http/https;重定向跟随、超时、chunked 解码由 reqwest 处理。
+fn is_supported_probe_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
 }
 
-fn parse_http_url(url: &str) -> Result<HttpUrl, BrowserError> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| BrowserError::UnsupportedUrl(url.to_owned()))?;
-    let (authority, path) = rest
-        .split_once('/')
-        .map(|(authority, path)| (authority, format!("/{path}")))
-        .unwrap_or((rest, "/".to_owned()));
-
-    if authority.is_empty() || authority.contains('@') {
+async fn probe_http_page(url: &str, timeout_secs: u64) -> Result<PageProbeEvidence, BrowserError> {
+    if !is_supported_probe_url(url) {
         return Err(BrowserError::UnsupportedUrl(url.to_owned()));
     }
 
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) if !host.is_empty() => {
-            let port = port
-                .parse::<u16>()
-                .map_err(|_| BrowserError::UnsupportedUrl(url.to_owned()))?;
-            (host.to_owned(), port)
-        }
-        _ => (authority.to_owned(), 80),
-    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs.max(1)))
+        .user_agent(concat!("specprobe/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(BrowserError::Client)?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|source| BrowserError::Probe {
+            target: url.to_owned(),
+            source,
+        })?;
 
-    Ok(HttpUrl {
-        original: url.to_owned(),
-        host,
-        port,
-        path,
+    let status = response.status();
+    let status_text = format!("{:?} {status}", response.version());
+    let body_bytes = response
+        .bytes()
+        .await
+        .map_err(|source| BrowserError::Probe {
+            target: url.to_owned(),
+            source,
+        })?;
+    let body = String::from_utf8_lossy(&body_bytes);
+
+    Ok(PageProbeEvidence {
+        url: url.to_owned(),
+        status_code: Some(status.as_u16()),
+        status_text,
+        title: extract_title(&body),
+        body_excerpt: excerpt(body.trim(), BODY_EXCERPT_LIMIT),
+        response_bytes: body_bytes.len(),
     })
-}
-
-fn split_http_response(response: &str) -> (&str, &str) {
-    response
-        .split_once("\r\n\r\n")
-        .or_else(|| response.split_once("\n\n"))
-        .unwrap_or((response, ""))
 }
 
 fn extract_title(body: &str) -> Option<String> {
@@ -388,44 +323,6 @@ fn extract_title(body: &str) -> Option<String> {
     let start = lower.find("<title>")? + "<title>".len();
     let end = lower[start..].find("</title>")? + start;
     Some(body[start..end].trim().to_owned())
-}
-
-fn decode_chunked_body(body: &str) -> Option<String> {
-    let bytes = body.as_bytes();
-    let mut index = 0;
-    let mut decoded = Vec::new();
-
-    loop {
-        let line_end = find_crlf(bytes, index)?;
-        let size_line = std::str::from_utf8(&bytes[index..line_end]).ok()?;
-        let size = usize::from_str_radix(size_line.split(';').next()?.trim(), 16).ok()?;
-        index = line_end + 2;
-
-        if size == 0 {
-            break;
-        }
-        if index + size > bytes.len() {
-            return None;
-        }
-
-        decoded.extend_from_slice(&bytes[index..index + size]);
-        index += size;
-        if bytes.get(index..index + 2) == Some(b"\r\n") {
-            index += 2;
-        } else if bytes.get(index) == Some(&b'\n') {
-            index += 1;
-        }
-    }
-
-    Some(String::from_utf8_lossy(&decoded).to_string())
-}
-
-fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
-    bytes
-        .get(start..)?
-        .windows(2)
-        .position(|window| window == b"\r\n")
-        .map(|offset| start + offset)
 }
 
 fn excerpt(text: &str, limit: usize) -> String {
@@ -466,16 +363,17 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{decode_chunked_body, extract_title, parse_http_url, run_browser_plan};
+    use super::{extract_title, is_supported_probe_url, run_browser_plan};
 
-    #[test]
-    fn browser_dry_run_builds_action_plan() {
+    #[tokio::test]
+    async fn browser_dry_run_builds_action_plan() {
         let root = temp_project("specprobe-browser-plan");
         let file = root.join("PRD.md");
         fs::write(&file, "- 页面应该显示登录成功提示。").expect("write requirement");
 
-        let report =
-            run_browser_plan(&file, "http://127.0.0.1:3000", 2, true).expect("dry run succeeds");
+        let report = run_browser_plan(&file, "http://127.0.0.1:3000", 2, true)
+            .await
+            .expect("dry run succeeds");
 
         assert!(!report.execution.attempted);
         assert!(report.execution.success);
@@ -484,8 +382,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn http_probe_collects_status_title_and_body() {
+    #[tokio::test]
+    async fn http_probe_collects_status_title_and_body() {
         let root = temp_project("specprobe-browser-http");
         let file = root.join("PRD.md");
         fs::write(&file, "- 页面应该显示首页标题。").expect("write requirement");
@@ -493,15 +391,20 @@ mod tests {
         let port = listener.local_addr().expect("read local addr").port();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept connection");
-            let mut buffer = [0_u8; 512];
+            let mut buffer = [0_u8; 1024];
             let _ = stream.read(&mut buffer);
-            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><head><title>SpecProbe Demo</title></head><body>Hello</body></html>";
+            let body = "<html><head><title>SpecProbe Demo</title></head><body>Hello</body></html>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
             stream
                 .write_all(response.as_bytes())
                 .expect("write response");
         });
 
         let report = run_browser_plan(&file, &format!("http://127.0.0.1:{port}/"), 3, false)
+            .await
             .expect("browser probe succeeds");
 
         handle.join().expect("server thread joins");
@@ -514,8 +417,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_url_scheme() {
-        assert!(parse_http_url("https://example.com").is_err());
+    fn accepts_only_http_and_https_probe_urls() {
+        assert!(is_supported_probe_url("http://127.0.0.1:3000"));
+        assert!(is_supported_probe_url("https://example.com"));
+        assert!(!is_supported_probe_url("ftp://example.com"));
+        assert!(!is_supported_probe_url("file:///tmp/index.html"));
     }
 
     #[test]
@@ -523,14 +429,6 @@ mod tests {
         assert_eq!(
             extract_title("<html><title>Hello</title></html>"),
             Some("Hello".to_owned())
-        );
-    }
-
-    #[test]
-    fn decodes_chunked_body() {
-        assert_eq!(
-            decode_chunked_body("5\r\nHello\r\n6\r\n World\r\n0\r\n\r\n"),
-            Some("Hello World".to_owned())
         );
     }
 

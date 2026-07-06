@@ -62,11 +62,12 @@
 
 ## 4. Phase 1 — 核心闭环真实化(3~4 周,决定成败)
 
-### 1.1 异步化改造(2~3 天)
+### 1.1 异步化改造(2~3 天)——已完成(2026-07-06)
 
-- 引入 `tokio`(full)+ `reqwest`(json + rustls-tls)。
+- 引入 `tokio`(macros/process/rt-multi-thread/time)+ `reqwest`(json + rustls-tls,default-features 关闭)。
 - `main` 改 `#[tokio::main]`;`std::process::Command` → `tokio::process`;页面探测改用 reqwest(顺带解决 https、重定向、超时)。
 - 模块边界不动,工作量主要是 async 签名传染。必须最先做:后续服务器进程、浏览器 sidecar、AI 调用需要并发管理。
+- 实施记录:launch 超时从 50ms 轮询改为 `tokio::time::timeout` + `start_kill`,并加 `kill_on_drop` 兜底;AI Provider 从 `Box<dyn Trait>` 改枚举分发(async fn 与 dyn 不兼容),`analyze` 已是 async 签名,1.2 可直接填充传输;手写 TCP/HTTP/chunked 解析约 150 行删除,由 reqwest 取代;`doctor` 的短命 `--version` 探测有意保留同步 std::process,待 1.2 接入端点检查时一并转换。
 
 ### 1.2 真 AI Provider(约 1 周)
 

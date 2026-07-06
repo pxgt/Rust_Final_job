@@ -95,7 +95,8 @@ AI 缺陷诊断与源码定位
 - `clap`：命令行界面。
 - `serde` / `serde_json`：测试计划、证据和报告序列化。
 - `thiserror` / `anyhow`：分层错误处理。
-- `tokio`：后续负责子进程、日志与测试任务并发。
+- `tokio`：异步运行时，负责子进程、超时与后续并发编排（1.1 已引入）。
+- `reqwest`（rustls）：页面探测与后续 AI 传输、就绪轮询（1.1 已引入）。
 - SQLite：后续保存项目、测试执行和问题历史。
 
 ### 5.2 AI 层
@@ -316,7 +317,7 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 - 0.3 测试基建：完成，7 个 CLI 集成测试 + requirements JSON 快照（32 单测 + 7 集成全过）。
 - 0.4 小缺陷修复：完成（markdown 链接文本保留、launch `long_running` 语义、`.gitattributes`）。
 
-下一步：Phase 1.1 引入 tokio + reqwest 的异步化改造（见 ROADMAP §4）。
+Phase 1.1 异步化改造已于 2026-07-06 完成。下一步：Phase 1.2 真 AI Provider（OpenAI 兼容 + Ollama 传输、结构化输出、响应缓存,见 ROADMAP §4）。
 
 环境变量约定不变：Mock Provider 无需 API key；OpenAI 兼容接口需要 `OPENAI_API_KEY` 和 `OPENAI_MODEL`；本地 Ollama 需要 `OLLAMA_MODEL`。
 
@@ -333,6 +334,16 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 | 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
 
 ## 12. 开发日志
+
+### 2026-07-06（晚间，Phase 1.1 完成）
+
+- 引入 `tokio`（macros/process/rt-multi-thread/time）与 `reqwest`（rustls-tls + json，关闭默认特性），全链路异步化：`main`/`run`/`launch`/`browser`/`ai`/`review`/`propose` 均为 async。
+- `runtime.rs`：`std::process` → `tokio::process`；超时从 50ms 轮询改为 `tokio::time::timeout` + `start_kill`（含与自然退出的竞争处理），并加 `kill_on_drop` 兜底。
+- `browser.rs`：删除手写 TCP/HTTP 解析与 chunked 解码（约 150 行），改用 reqwest；探测能力提升——支持 `https://`、重定向跟随；错误类型细分 `Client`/`Probe`。
+- `ai.rs`：`Box<dyn AiProvider>` 改为枚举分发（async fn 与 dyn trait 不兼容），`analyze` 已是 async 签名，1.2 填充真实传输即可。
+- `doctor.rs` 的短命 `--version` 探测有意保留同步实现，待 1.2 一并转换。
+- 测试全部迁移 `#[tokio::test]`；chunked 解码测试随实现删除，URL scheme 校验测试重写。当前 31 单测 + 7 集成，严格 Clippy 无警告。
+- 用户级 `~/.cargo/config.toml` 持久化方案被权限系统拒绝（TLS 弱化类配置），已向用户说明三个替代选项，本次沿用会话级 `CARGO_HTTP_CHECK_REVOKE=false`。
 
 ### 2026-07-06（下午，Phase 0 完成）
 

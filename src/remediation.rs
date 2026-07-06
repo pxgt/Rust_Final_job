@@ -130,7 +130,7 @@ impl<'a> ProposalBuilder<'a> {
     }
 }
 
-pub fn generate_remediation_report(
+pub async fn generate_remediation_report(
     requirements_path: &Path,
     options: RemediationOptions,
 ) -> Result<RemediationReport, RemediationError> {
@@ -145,7 +145,8 @@ pub fn generate_remediation_report(
             launch_timeout_secs: options.launch_timeout_secs,
             browser_timeout_secs: options.browser_timeout_secs,
         },
-    )?;
+    )
+    .await?;
 
     let (proposals, regression_plan) = ProposalBuilder::new(&review).build();
     let summary = RemediationSummary {
@@ -475,8 +476,8 @@ mod tests {
 
     use super::{PatchStrategy, RemediationOptions, generate_remediation_report};
 
-    #[test]
-    fn generates_requirement_patch_preview() {
+    #[tokio::test]
+    async fn generates_requirement_patch_preview() {
         let root = temp_project("specprobe-remediation-requirement");
         let requirements = root.join("PRD.md");
         fs::write(&requirements, "- 页面应该简单友好。").expect("write requirements");
@@ -493,6 +494,7 @@ mod tests {
                 browser_timeout_secs: 1,
             },
         )
+        .await
         .expect("remediation succeeds");
 
         let proposal = report
@@ -509,8 +511,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn clean_review_still_has_global_regression_check() {
+    #[tokio::test]
+    async fn clean_review_still_has_global_regression_check() {
         let root = temp_project("specprobe-remediation-clean");
         let requirements = root.join("PRD.md");
         fs::write(&requirements, "- 系统必须显示登录成功提示。").expect("write requirements");
@@ -527,6 +529,7 @@ mod tests {
                 browser_timeout_secs: 1,
             },
         )
+        .await
         .expect("remediation succeeds");
 
         assert!(report.proposals.is_empty());

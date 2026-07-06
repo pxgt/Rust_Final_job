@@ -13,7 +13,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe requirements <PATH>`:解析 Markdown/TXT 需求文档,生成需求、验收标准和初始测试计划(基于关键词规则)。
 - `specprobe ai <PATH>`:对需求解析结果生成改进建议(当前仅离线 Mock Provider 可用,基于确定性规则)。
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
-- `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对本地 `http://` 页面采集状态码、标题和正文摘要。
+- `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对 `http://` 或 `https://` 页面采集状态码、标题和正文摘要(支持重定向跟随)。
 - `specprobe review <PATH>`:汇总需求质量、项目启动和页面探测证据,生成带审批状态的问题清单。
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
@@ -23,7 +23,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 以下能力**尚未实现**,是路线图 Phase 1 的核心工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
 
 - 真实大语言模型调用:OpenAI 兼容与 Ollama Provider 目前只有配置检查,无 HTTP 传输。
-- 真实浏览器自动化:当前"浏览器执行器"只做单页面 HTTP 探测(仅 `http://`),不执行点击、输入、DOM 断言、截图和 console/网络采集。
+- 真实浏览器自动化:当前"浏览器执行器"只做单页面 HTTP/HTTPS 探测,不执行点击、输入、DOM 断言、截图和 console/网络采集。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
 

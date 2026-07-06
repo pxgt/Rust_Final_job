@@ -14,7 +14,7 @@ use clap::Parser;
 
 use crate::cli::{Cli, Command};
 
-pub fn run() -> Result<()> {
+pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -35,7 +35,7 @@ pub fn run() -> Result<()> {
             provider,
             json,
         } => {
-            let report = ai::analyze_with_provider(&path, provider)?;
+            let report = ai::analyze_with_provider(&path, provider).await?;
             output::print_ai_report(&report, json)?;
         }
         Command::Launch {
@@ -44,7 +44,7 @@ pub fn run() -> Result<()> {
             dry_run,
             json,
         } => {
-            let report = runtime::launch_project(&path, timeout_secs, dry_run)?;
+            let report = runtime::launch_project(&path, timeout_secs, dry_run).await?;
             output::print_launch_report(&report, json)?;
         }
         Command::Browser {
@@ -54,7 +54,7 @@ pub fn run() -> Result<()> {
             dry_run,
             json,
         } => {
-            let report = browser::run_browser_plan(&path, &base_url, timeout_secs, dry_run)?;
+            let report = browser::run_browser_plan(&path, &base_url, timeout_secs, dry_run).await?;
             output::print_browser_report(&report, json)?;
         }
         Command::Review {
@@ -79,7 +79,8 @@ pub fn run() -> Result<()> {
                     launch_timeout_secs,
                     browser_timeout_secs,
                 },
-            )?;
+            )
+            .await?;
             output::print_review_report(&report, json)?;
         }
         Command::Propose {
@@ -104,7 +105,8 @@ pub fn run() -> Result<()> {
                     launch_timeout_secs,
                     browser_timeout_secs,
                 },
-            )?;
+            )
+            .await?;
             output::print_remediation_report(&report, json)?;
         }
     }

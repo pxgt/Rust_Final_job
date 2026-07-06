@@ -3,13 +3,13 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use thiserror::Error;
+use tokio::process::Command;
 
 const LOG_EXCERPT_LIMIT: usize = 4_000;
 
@@ -130,7 +130,7 @@ struct CommandPlan {
     command: LaunchCommand,
 }
 
-pub fn launch_project(
+pub async fn launch_project(
     path: &Path,
     timeout_secs: u64,
     dry_run: bool,
@@ -176,7 +176,7 @@ pub fn launch_project(
     }
 
     let command = plan.command.clone();
-    let run = run_command(&command, timeout_secs)?;
+    let run = run_command(&command, timeout_secs).await?;
     let mut diagnostics = Vec::new();
 
     if run.execution.long_running {
@@ -323,7 +323,10 @@ struct CommandRun {
     stderr_excerpt: String,
 }
 
-fn run_command(command: &LaunchCommand, timeout_secs: u64) -> Result<CommandRun, RuntimeError> {
+async fn run_command(
+    command: &LaunchCommand,
+    timeout_secs: u64,
+) -> Result<CommandRun, RuntimeError> {
     let working_directory = PathBuf::from(&command.working_directory);
     let log_dir = env::temp_dir().join(format!("specprobe-run-{}", unique_suffix()));
     fs::create_dir_all(&log_dir).map_err(|source| RuntimeError::Io {
@@ -346,7 +349,8 @@ fn run_command(command: &LaunchCommand, timeout_secs: u64) -> Result<CommandRun,
     process
         .current_dir(&working_directory)
         .stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file));
+        .stderr(Stdio::from(stderr_file))
+        .kill_on_drop(true);
 
     let start = Instant::now();
     let mut child = process.spawn().map_err(|source| RuntimeError::Io {
@@ -355,27 +359,27 @@ fn run_command(command: &LaunchCommand, timeout_secs: u64) -> Result<CommandRun,
     })?;
     let timeout = Duration::from_secs(timeout_secs.max(1));
     let mut timed_out = false;
-    let exit_status = loop {
-        if let Some(status) = child.try_wait().map_err(|source| RuntimeError::Io {
+    let exit_status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status.map_err(|source| RuntimeError::Io {
             path: working_directory.clone(),
             source,
-        })? {
-            break status;
-        }
-
-        if start.elapsed() >= timeout {
+        })?,
+        Err(_elapsed) => {
             timed_out = true;
-            child.kill().map_err(|source| RuntimeError::Io {
+            // 超时与自然退出存在竞争:对已退出进程 start_kill 返回 InvalidInput,忽略。
+            if let Err(source) = child.start_kill()
+                && source.kind() != io::ErrorKind::InvalidInput
+            {
+                return Err(RuntimeError::Io {
+                    path: working_directory.clone(),
+                    source,
+                });
+            }
+            child.wait().await.map_err(|source| RuntimeError::Io {
                 path: working_directory.clone(),
                 source,
-            })?;
-            break child.wait().map_err(|source| RuntimeError::Io {
-                path: working_directory.clone(),
-                source,
-            })?;
+            })?
         }
-
-        thread::sleep(Duration::from_millis(50));
     };
 
     let duration_ms = start.elapsed().as_millis();
@@ -540,8 +544,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn dry_run_reports_detected_command_without_execution() {
+    #[tokio::test]
+    async fn dry_run_reports_detected_command_without_execution() {
         let root = temp_project("specprobe-runtime-dry");
         fs::write(
             root.join("Cargo.toml"),
@@ -549,7 +553,9 @@ mod tests {
         )
         .expect("write cargo manifest");
 
-        let report = launch_project(&root, 1, true).expect("dry run should succeed");
+        let report = launch_project(&root, 1, true)
+            .await
+            .expect("dry run should succeed");
 
         assert_eq!(report.adapter, ProjectAdapterKind::Rust);
         assert!(!report.execution.attempted);
@@ -557,8 +563,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn run_command_captures_stdout() {
+    #[tokio::test]
+    async fn run_command_captures_stdout() {
         let root = temp_project("specprobe-runtime-run");
         let command = if cfg!(windows) {
             LaunchCommand {
@@ -582,7 +588,7 @@ mod tests {
             }
         };
 
-        let run = run_command(&command, 3).expect("command should run");
+        let run = run_command(&command, 3).await.expect("command should run");
 
         assert!(run.execution.success);
         assert!(run.stdout_excerpt.contains("specprobe-runtime"));
@@ -591,8 +597,8 @@ mod tests {
 
     // 下面两个超时测试直接把系统临时目录当工作目录:被杀的 cmd/sh 可能留下
     // 孤儿子进程占用工作目录(进程树 kill 缺陷,ROADMAP 1.6),专属目录会删不掉。
-    #[test]
-    fn long_running_process_with_output_is_not_a_failure() {
+    #[tokio::test]
+    async fn long_running_process_with_output_is_not_a_failure() {
         // Linux 上必须用外部 /bin/echo:dash 内建 echo 对文件是块缓冲,
         // SIGKILL 终止时缓冲未落盘,stdout 采集为空,long_running 判定不成立。
         let command = if cfg!(windows) {
@@ -601,7 +607,7 @@ mod tests {
             timeout_probe_command("/bin/echo specprobe-server; sleep 30")
         };
 
-        let run = run_command(&command, 1).expect("command should run");
+        let run = run_command(&command, 1).await.expect("command should run");
 
         assert!(run.execution.timed_out);
         assert!(run.execution.long_running);
@@ -609,15 +615,15 @@ mod tests {
         assert!(run.stdout_excerpt.contains("specprobe-server"));
     }
 
-    #[test]
-    fn silent_timeout_stays_a_failure() {
+    #[tokio::test]
+    async fn silent_timeout_stays_a_failure() {
         let command = if cfg!(windows) {
             timeout_probe_command("ping -n 30 127.0.0.1 > nul")
         } else {
             timeout_probe_command("sleep 30")
         };
 
-        let run = run_command(&command, 1).expect("command should run");
+        let run = run_command(&command, 1).await.expect("command should run");
 
         assert!(run.execution.timed_out);
         assert!(!run.execution.long_running);

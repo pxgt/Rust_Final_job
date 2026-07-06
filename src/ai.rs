@@ -103,20 +103,28 @@ pub enum Confidence {
     High,
 }
 
-trait AiProvider {
-    fn info(&self) -> AiProviderInfo;
-    fn analyze(&self, report: &RequirementReport) -> Result<AiModelOutput, AiError>;
-}
-
-pub fn analyze_with_provider(
+// Provider 通过枚举分发而不是 dyn trait:analyze 是 async fn,
+// 且各 Provider 集合封闭、构造方式各异,枚举分发无需额外依赖。
+pub async fn analyze_with_provider(
     path: &Path,
     provider_kind: AiProviderKind,
 ) -> Result<AiAnalysisReport, AiError> {
     let base_report = analyze_requirements(path)?;
-    let provider = provider_for(provider_kind);
-    let provider_info = provider.info();
     let request = build_request_preview(&base_report);
-    let model_output = provider.analyze(&base_report)?;
+    let (provider_info, model_output) = match provider_kind {
+        AiProviderKind::Mock => {
+            let provider = MockProvider;
+            (provider.info(), provider.analyze(&base_report).await?)
+        }
+        AiProviderKind::OpenaiCompatible => {
+            let provider = OpenAiCompatibleProvider::from_env();
+            (provider.info(), provider.analyze(&base_report).await?)
+        }
+        AiProviderKind::Ollama => {
+            let provider = OllamaProvider::from_env();
+            (provider.info(), provider.analyze(&base_report).await?)
+        }
+    };
 
     Ok(AiAnalysisReport {
         provider: provider_info,
@@ -124,14 +132,6 @@ pub fn analyze_with_provider(
         request,
         model_output,
     })
-}
-
-fn provider_for(kind: AiProviderKind) -> Box<dyn AiProvider> {
-    match kind {
-        AiProviderKind::Mock => Box::new(MockProvider),
-        AiProviderKind::OpenaiCompatible => Box::new(OpenAiCompatibleProvider::from_env()),
-        AiProviderKind::Ollama => Box::new(OllamaProvider::from_env()),
-    }
 }
 
 fn build_request_preview(report: &RequirementReport) -> AiRequestPreview {
@@ -159,7 +159,7 @@ fn build_prompt(report: &RequirementReport) -> String {
 
 struct MockProvider;
 
-impl AiProvider for MockProvider {
+impl MockProvider {
     fn info(&self) -> AiProviderInfo {
         AiProviderInfo {
             kind: AiProviderKind::Mock,
@@ -170,7 +170,7 @@ impl AiProvider for MockProvider {
         }
     }
 
-    fn analyze(&self, report: &RequirementReport) -> Result<AiModelOutput, AiError> {
+    async fn analyze(&self, report: &RequirementReport) -> Result<AiModelOutput, AiError> {
         let mut suggestions = Vec::new();
 
         for requirement in &report.requirements {
@@ -219,7 +219,7 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-impl AiProvider for OpenAiCompatibleProvider {
+impl OpenAiCompatibleProvider {
     fn info(&self) -> AiProviderInfo {
         AiProviderInfo {
             kind: AiProviderKind::OpenaiCompatible,
@@ -233,7 +233,7 @@ impl AiProvider for OpenAiCompatibleProvider {
         }
     }
 
-    fn analyze(&self, _report: &RequirementReport) -> Result<AiModelOutput, AiError> {
+    async fn analyze(&self, _report: &RequirementReport) -> Result<AiModelOutput, AiError> {
         if self.api_key.is_none() {
             return Err(AiError::MissingConfig {
                 provider: "OpenAI-compatible",
@@ -269,7 +269,7 @@ impl OllamaProvider {
     }
 }
 
-impl AiProvider for OllamaProvider {
+impl OllamaProvider {
     fn info(&self) -> AiProviderInfo {
         AiProviderInfo {
             kind: AiProviderKind::Ollama,
@@ -283,7 +283,7 @@ impl AiProvider for OllamaProvider {
         }
     }
 
-    fn analyze(&self, _report: &RequirementReport) -> Result<AiModelOutput, AiError> {
+    async fn analyze(&self, _report: &RequirementReport) -> Result<AiModelOutput, AiError> {
         if self.model.is_none() {
             return Err(AiError::MissingConfig {
                 provider: "Ollama",
@@ -454,19 +454,20 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        AiProvider, AiProviderKind, OpenAiCompatibleProvider, SuggestionSeverity, SuggestionType,
+        AiProviderKind, OpenAiCompatibleProvider, SuggestionSeverity, SuggestionType,
         analyze_with_provider,
     };
     use crate::requirements::analyze_requirements;
 
-    #[test]
-    fn mock_provider_generates_suggestions_from_requirement_quality() {
+    #[tokio::test]
+    async fn mock_provider_generates_suggestions_from_requirement_quality() {
         let root = temp_project("specprobe-ai-mock");
         let file = root.join("PRD.md");
         fs::write(&file, "- 页面应该简单友好。").expect("write requirement");
 
-        let report =
-            analyze_with_provider(&file, AiProviderKind::Mock).expect("mock analysis succeeds");
+        let report = analyze_with_provider(&file, AiProviderKind::Mock)
+            .await
+            .expect("mock analysis succeeds");
 
         assert_eq!(report.provider.kind, AiProviderKind::Mock);
         assert_eq!(report.base_report.requirements.len(), 1);
@@ -478,8 +479,8 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test project");
     }
 
-    #[test]
-    fn openai_compatible_provider_requires_api_key() {
+    #[tokio::test]
+    async fn openai_compatible_provider_requires_api_key() {
         let root = temp_project("specprobe-ai-openai");
         let file = root.join("PRD.md");
         fs::write(&file, "- 系统必须显示解析结果。").expect("write requirement");
@@ -492,6 +493,7 @@ mod tests {
 
         let error = provider
             .analyze(&base_report)
+            .await
             .expect_err("missing key should fail");
 
         assert!(error.to_string().contains("OPENAI_API_KEY"));
