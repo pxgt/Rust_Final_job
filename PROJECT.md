@@ -1,0 +1,377 @@
+# SpecProbe 项目文档
+
+> 本文件是项目的持续维护台账。每次开发完成后都要更新“当前状态”“里程碑”“开发日志”和“下一步任务”。
+
+## 1. 项目概述
+
+- 项目名称：SpecProbe
+- 课程方向：Rust 语言课程大作业
+- 项目类型：可扩展的 AI 代码审查与自动化测试平台
+- 当前版本：0.8.0（课程演示与实验评估阶段）
+- 当前阶段：M8 基础版已完成，课程演示闭环已建立
+- 最近更新：2026-07-03
+
+SpecProbe 面向通过 AI Coding 工具生成或快速迭代的软件项目。它读取项目代码和需求文档，生成结构化验收测试，运行被测项目并模拟真实使用过程，收集运行结果、日志、截图、网络请求和进程输出，最终给出带证据的问题清单与修改建议。用户决定是否应用修改，系统在修改后执行回归测试。
+
+SpecProbe 的总体定位不限定语言、框架或应用形态。系统将通过项目适配器、测试执行器和 AI Provider 等可替换组件支持不同类型的软件。考虑课程周期和可演示性，当前课程版本选择 Web 项目作为第一个完整适配目标，但这属于实现范围限制，而不是平台能力边界。
+
+## 2. 问题背景
+
+宽泛需求会让 AI 生成的项目停留在初稿状态，常见问题包括：
+
+- 核心功能只实现了理想路径，边界条件和错误处理缺失。
+- 文档描述与实际功能不一致。
+- 页面可以打开，但交互流程、状态反馈或导航逻辑不符合预期。
+- 代码量较大，非专业用户无法快速定位问题。
+- 单纯让 AI 阅读源码缺少运行证据，容易产生误判。
+
+SpecProbe 的核心原则是：AI 负责理解和推理，确定性程序负责执行与取证，用户保留最终修改权。
+
+## 3. 课程版本范围
+
+### 3.1 当前交付目标
+
+- Markdown/TXT 需求文档。
+- 通用项目结构、编程语言、构建清单和测试文件识别。
+- Web 项目的启动方式识别，作为首个项目适配器。
+- 从需求中提取功能点与验收标准。
+- 生成与执行器无关的结构化测试计划。
+- 将通用测试计划转换为可重复执行的浏览器测试步骤。
+- 执行打开页面、点击、输入、等待和断言。
+- 捕获截图、控制台错误、HTTP 错误和项目日志。
+- 结合需求、运行证据和源码生成问题清单。
+- 用户接受、拒绝或忽略修改建议。
+- 以 Git patch 形式生成修改，并进行回归测试。
+
+### 3.2 课程版本暂不实现
+
+- 命令行、桌面和移动应用的完整测试执行器。
+- 所有语言与框架的项目启动适配器。
+- 无需审批的自主代码修改。
+- 无证据的纯主观 UI 审美评分。
+- 执行不受限制的 AI 生成 Shell 命令。
+
+以上项目不属于架构上的禁止能力。后续可通过新增适配器和执行器逐步支持，无需改变需求、证据、问题与审批等核心数据模型。
+
+## 4. 总体流程
+
+```text
+需求文档 + 项目代码
+        |
+        v
+项目扫描与技术栈识别
+        |
+        v
+需求提取与验收标准生成
+        |
+        v
+结构化测试计划
+        |
+        v
+项目适配器启动被测程序
+        |
+        v
+对应测试执行器模拟使用行为
+        |
+        v
+截图 / 日志 / 网络请求 / 断言结果
+        |
+        v
+AI 缺陷诊断与源码定位
+        |
+        v
+问题列表与修改建议
+        |
+        v
+用户审批 -> Git patch -> 回归测试
+```
+
+## 5. 技术方案
+
+### 5.1 Rust 核心
+
+- `clap`：命令行界面。
+- `serde` / `serde_json`：测试计划、证据和报告序列化。
+- `thiserror` / `anyhow`：分层错误处理。
+- `tokio`：后续负责子进程、日志与测试任务并发。
+- SQLite：后续保存项目、测试执行和问题历史。
+
+### 5.2 AI 层
+
+AI Provider 通过 trait 抽象，当前已实现离线 Mock Provider，并预留 OpenAI 兼容 Provider 与 Ollama Provider 的配置入口。AI 层接收 M2 输出的结构化需求报告，返回受 Schema 约束的结构化建议，不直接获得无限制命令执行权限。
+
+当前 Mock Provider 用确定性规则模拟 AI 分析，用于课程演示、离线开发和回归测试。真实云端模型调用需要 API key；本地 Ollama 调用需要确认本地模型名称。
+
+### 5.3 项目适配层
+
+项目适配器负责识别、构建、启动和停止特定类型的被测项目。课程版本优先实现 Web 项目适配器，后续可以增加 CLI、后端服务、桌面应用和移动应用适配器。
+
+### 5.4 测试执行层
+
+测试执行器通过统一接口接收测试计划并返回结构化证据。课程版本计划使用 Playwright 实现浏览器执行器；后续可扩展命令行执行器、API 执行器、桌面 UI 执行器等。Rust 负责计划、调度、进程管理和结果归档。
+
+### 5.5 扩展机制
+
+- `ProjectAdapter`：识别技术栈并管理被测程序生命周期。
+- `TestExecutor`：将通用测试步骤映射为具体操作。
+- `EvidenceCollector`：采集不同运行环境下的日志、截图和响应。
+- `AiProvider`：接入云端或本地大语言模型。
+- `ReportRenderer`：输出终端、JSON、HTML 或后续图形界面报告。
+
+核心流程只依赖这些抽象接口，不直接依赖 Playwright 或某一种项目框架。
+
+### 5.6 安全边界
+
+- 默认只读分析被测项目。
+- 启动命令采用白名单或显式审批。
+- 修改以补丁形式展示，不直接覆盖用户代码。
+- 每条问题必须关联需求、复现步骤和运行证据。
+- 日志进入 AI 前进行密钥和敏感字段脱敏。
+
+## 6. 当前代码结构
+
+```text
+.
+|-- Cargo.toml
+|-- PROJECT.md
+|-- README.md
+|-- demo/
+|   `-- buggy-task-board/
+|       |-- public/
+|       |   |-- app.js
+|       |   |-- index.html
+|       |   `-- styles.css
+|       |-- KNOWN_ISSUES.md
+|       |-- README.md
+|       |-- REQUIREMENTS.md
+|       |-- package.json
+|       `-- server.js
+|-- docs/
+|   |-- COURSE_REPORT.md
+|   |-- DEMO_GUIDE.md
+|   |-- EXPERIMENT.md
+|   `-- specprobe-requirements.md
+|-- scripts/
+|   |-- cargo-msvc.ps1
+|   `-- run-demo.ps1
+`-- src/
+    |-- ai.rs
+    |-- main.rs
+    |-- lib.rs
+    |-- cli.rs
+    |-- doctor.rs
+    |-- browser.rs
+    |-- output.rs
+    |-- remediation.rs
+    |-- requirements.rs
+    |-- review.rs
+    |-- runtime.rs
+    `-- scanner.rs
+```
+
+- `cli.rs`：CLI 参数与子命令定义。
+- `ai.rs`：AI Provider 抽象、Mock Provider、OpenAI/Ollama 配置入口和 AI 增强报告。
+- `doctor.rs`：核心开发环境、首版 Web 测试环境和 AI Provider 配置诊断。
+- `browser.rs`：浏览器动作计划生成、dry-run 和本地 HTTP 页面探测。
+- `remediation.rs`：把问题清单转换为修复提案、补丁预览和回归检查清单。
+- `requirements.rs`：Markdown/TXT 需求解析、验收标准生成和测试计划生成。
+- `review.rs`：综合需求、启动与浏览器证据，生成结构化问题清单和审批状态。
+- `scanner.rs`：项目文件、技术栈、需求文档和测试文件识别。
+- `output.rs`：人类可读及 JSON 输出。
+- `scripts/cargo-msvc.ps1`：为当前开发机加载 MSVC 环境后执行 Cargo。
+- `scripts/run-demo.ps1`：构建工具、启动 FocusBoard 并生成完整演示报告。
+- `runtime.rs`：项目启动命令识别、受控运行、超时控制和 stdout/stderr 采集。
+- `demo/buggy-task-board`：包含五类预置缺陷的零依赖 Node.js 演示项目。
+- `docs/DEMO_GUIDE.md`：课堂演示步骤和推荐讲解顺序。
+- `docs/EXPERIMENT.md`：自动化指标、已知缺陷覆盖和浏览器复核结果。
+- `docs/COURSE_REPORT.md`：课程报告 Markdown 初稿。
+
+## 7. 数据模型草案
+
+后续核心对象：
+
+- `Requirement`：需求描述、来源位置、类别、优先级、验收标准和质量提示。
+- `AcceptanceCriterion`：可验证的预期行为和所需证据类型。
+- `TestPlan`：由需求生成的初始测试用例集合。
+- `TestStep`：动作、目标和输入。
+- `AiProvider`：AI 调用抽象，统一 Mock、OpenAI 兼容接口和 Ollama。
+- `AiModelOutput`：AI 增强分析结果，包括摘要、建议、追问和置信度。
+- `AiSuggestion`：针对单条需求的改进建议、严重程度和理由。
+- `LaunchReport`：被测项目启动命令、执行状态、日志摘要和诊断信息。
+- `LaunchExecution`：是否执行、是否超时、退出码、耗时和超时阈值。
+- `BrowserRunReport`：浏览器执行器报告，包含动作计划、页面探测证据和诊断信息。
+- `BrowserActionPlan`：由通用测试计划转换而来的浏览器动作集合。
+- `PageProbeEvidence`：页面状态码、标题、正文摘要、响应大小和耗时。
+- `ReviewReport`：综合审查报告，包含配置、摘要、原始证据和问题清单。
+- `EvidenceItem`：需求质量、启动命令、进程输出、浏览器计划或页面探测证据。
+- `Issue`：严重程度、问题类别、预期结果、实际结果、证据编号和建议。
+- `ApprovalState`：问题审批状态，目前默认 `pending`，后续支持用户接受、拒绝或忽略。
+- `RemediationReport`：修复提案报告，包含审查报告、提案摘要、补丁提案和回归计划。
+- `PatchProposal`：关联 `Issue` 的候选修复方案，包含目标文件、步骤、风险和补丁预览。
+- `RegressionCheck`：修复后的验证命令或人工检查步骤。
+- `Suggestion`：AI 层修改说明，后续可与候选补丁和审批状态关联。
+- `TestRun`：一次执行的环境、时间、结果和回归关系。
+
+## 8. 里程碑
+
+| 里程碑 | 内容 | 状态 |
+| --- | --- | --- |
+| M0 | Rust/MSVC 开发环境准备 | 已完成 |
+| M1 | CLI、环境诊断、项目扫描 | 已完成 |
+| M2 | 需求文档解析与结构化验收标准 | 已完成 |
+| M3 | AI Provider 抽象与模型调用 | 已完成 |
+| M4 | 被测项目启动与进程日志采集 | 已完成 |
+| M5 | 浏览器测试执行器基础版 | 已完成 |
+| M6 | 缺陷报告、证据链和审批界面 | 基础版已完成 |
+| M7 | 补丁生成与回归测试 | 基础版已完成 |
+| M8 | 演示项目、实验评估和课程报告 | 基础版已完成 |
+
+## 9. 当前状态
+
+已完成：
+
+- 安装 Rust 1.96.0 MSVC 工具链、Cargo、Clippy、rustfmt 和 rust-analyzer。
+- 验证 Visual Studio C++ 编译器与 Windows SDK 可用。
+- 初始化 Git 仓库和 Rust 2024 Edition 二进制项目。
+- 确定首版产品范围、系统流程和安全边界。
+- 实现 `doctor` 环境诊断。
+- 实现 `scan` 项目扫描。
+- 实现 `requirements` 需求解析。
+- 定义 `Requirement`、`AcceptanceCriterion`、`TestPlan` 和 `TestCase` 等结构化模型。
+- 支持 Markdown/TXT 文件和项目目录两种输入模式。
+- 从需求中推断类别、优先级、证据类型和执行器建议。
+- 识别模糊描述、过宽需求和缺少可观察结果等质量问题。
+- 实现 `ai` 增强分析命令。
+- 定义 `AiProvider` trait、`AiModelOutput`、`AiSuggestion` 等 AI 层模型。
+- 实现离线 Mock Provider，不需要 API key 即可生成稳定建议。
+- 预留 OpenAI 兼容 Provider 与 Ollama Provider 的配置和错误路径。
+- 实现 `launch` 项目启动与日志采集命令。
+- 支持 Node、Rust、Python 项目的初步启动命令识别。
+- 支持 dry-run 模式、受控超时、进程 kill、stdout/stderr 摘要、退出码和耗时记录。
+- 支持 Windows `.cmd/.bat` 命令执行与 UTF-8 BOM `package.json` 解析。
+- 对日志中的 token、password、secret、api key 等敏感行进行脱敏。
+- 实现 `browser` 浏览器动作计划与页面探测命令。
+- 将 M2 的 `TestPlan` 转换为打开页面、等待、交互、断言和采集证据等浏览器动作。
+- 支持浏览器执行器 dry-run 模式。
+- 支持本地 `http://` 页面探测，采集 HTTP 状态码、页面标题、正文摘要、响应大小和耗时。
+- 支持 chunked HTTP 响应正文解码，避免摘要中出现传输编码噪声。
+- 实现 `review` 综合审查命令。
+- 定义 `ReviewReport`、`EvidenceItem`、`Issue`、`ApprovalState` 等缺陷报告模型。
+- 将需求质量提示、启动命令结果、进程输出、浏览器动作计划和页面探测结果统一为证据项。
+- 可根据缺少可观察结果、无法准备启动命令、进程失败、浏览器探测失败等证据生成问题清单。
+- 每个问题包含严重程度、类别、预期结果、实际结果、证据编号、修改建议和默认待审批状态。
+- `review` 默认计划级审查，只有 `--execute` 才执行启动和页面探测，符合默认安全边界。
+- 实现 `propose` 修复提案命令。
+- 定义 `RemediationReport`、`PatchProposal`、`PatchStrategy`、`PatchSafety`、`RegressionPlan` 和 `RegressionCheck`。
+- 将 M6 的 `Issue` 问题清单转换为可审批的修复提案。
+- 对需求澄清和启动配置类问题生成 Git patch 风格的补丁预览。
+- 对每个修复提案生成回归检查命令，并提供全局综合审查回归命令。
+- `propose` 默认不执行被测项目，也不自动修改用户代码，只输出预览和检查清单。
+- 创建 FocusBoard 故障注入 Web 项目，包含 API 500、空输入校验、统计更新、筛选和持久化五类缺陷。
+- 演示项目只使用 Node.js 内置模块，不需要安装第三方 npm 依赖。
+- 实现 `scripts/run-demo.ps1`，自动运行 scan、requirements、ai、launch、browser、review 和 propose。
+- 演示流程生成 7 份 JSON 报告并保存到 `.specprobe/demo-reports`。
+- 实验提取 12 条需求和 12 个测试用例，生成 15 条 Mock AI 建议。
+- 首页探测返回 HTTP 200，故障 API 返回 HTTP 500 并生成高严重度浏览器失败 Issue。
+- 综合生成 4 个 Issue、4 个修复提案、3 个补丁预览和 9 个回归检查。
+- 浏览器人工复现五个预置缺陷，并验证 375px 页面无横向溢出。
+- 完成课堂演示指南、实验评估记录和课程报告初稿。
+- 支持人类可读与 JSON 两种输出。
+- 建立 29 个单元测试并验证真实编译。
+- 通过 `cargo fmt` 与严格模式 Clippy 检查。
+
+当前 M0-M8 基础交付均已完成，已经形成可运行、可测试、可演示的课程项目闭环。Playwright 深度执行、真实模型传输、审批持久化和自动应用补丁仍属于后续增强能力。
+
+已知环境事项：
+
+- 当前 Visual Studio 安装未被 `vswhere` 正确注册。
+- 普通 PowerShell 不会自动包含 `link.exe`。
+- 使用 `scripts/cargo-msvc.ps1` 加载 `vcvars64.bat` 后执行 Cargo。
+- PowerShell 下运行严格 Clippy 时使用 `.\scripts\cargo-msvc.ps1 --% clippy --all-targets -- -D warnings`，避免 `--` 被脚本参数解析吞掉。
+
+## 10. 下一步任务
+
+1. 根据课程格式要求完善报告封面、目录、参考文献和项目截图。
+2. 录制或彩排 5-8 分钟课堂演示，确认命令和讲解节奏。
+3. 接入 Playwright 后端，自动发现空输入、统计、筛选和持久化交互缺陷。
+4. 将 `Issue` 和 `PatchProposal` 接入真实 AI Provider，生成源码定位和候选补丁。
+5. 后续增加用户审批持久化、真实 Git patch 应用和自动回归执行。
+
+当前默认 Mock Provider 不需要 API key。后续如果启用 OpenAI 兼容接口，需要提供 `OPENAI_API_KEY` 和 `OPENAI_MODEL`；如果启用本地 Ollama，需要提供 `OLLAMA_MODEL` 并确认本地模型可用。
+
+## 11. 风险记录
+
+| 风险 | 影响 | 缓解方案 |
+| --- | --- | --- |
+| 项目范围过大 | 无法在课程周期内形成完整演示 | 保留通用扩展架构，课程版本只交付 Web 适配器和受限测试动作 |
+| AI 输出不稳定 | 测试无法重复或报告误判 | JSON Schema、确定性执行器、证据校验 |
+| 执行被测项目存在安全风险 | 执行恶意脚本或泄露数据 | 命令审批、超时、目录限制，后续考虑容器 |
+| UI 判断过于主观 | 结果缺乏可信度 | 优先检测可访问性、布局溢出和流程状态 |
+| 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
+
+## 12. 开发日志
+
+### 2026-07-03
+
+- 开启并完成 M8 课程演示与实验评估基础阶段。
+- 创建零依赖 Node.js 演示项目 FocusBoard，并注入五类可复现缺陷。
+- 新增 `scripts/run-demo.ps1`，一键运行 M1-M7 核心能力并归档 7 份 JSON 报告。
+- 实验识别 Node.js 技术栈，提取 12 条需求和 12 个测试用例，生成 15 条 Mock AI 建议。
+- 首页探测返回 HTTP 200，故障 API 返回 HTTP 500。
+- 综合生成 4 个 Issue、4 个修复提案、3 个补丁预览和 9 个回归检查。
+- 使用浏览器复现 API、空输入、完成统计、筛选和持久化缺陷，并验证 375px 无横向溢出。
+- 新增课堂演示指南、实验评估记录和课程报告初稿。
+- 项目版本更新到 0.8.0，M0-M8 基础交付全部完成。
+
+### 2026-06-17
+
+- 开启并完成 M7 修复提案与回归检查基础阶段。
+- 新增 `propose` 子命令，基于 `review` 问题清单生成候选修复方案。
+- 定义 `RemediationReport`、`PatchProposal`、`PatchStrategy`、`PatchSafety`、`RegressionPlan` 和 `RegressionCheck`。
+- 为需求澄清和启动配置类问题生成 Git patch 风格的补丁预览。
+- 为每个修复提案生成回归检查命令，并增加全局综合审查回归命令。
+- 保持默认只读和不自动应用补丁的安全边界。
+- 单元测试增加到 29 个，严格模式 Clippy 无警告。
+- 开启并完成 M6 缺陷报告与证据链基础阶段。
+- 新增 `review` 子命令，默认进行计划级审查，使用 `--execute` 后执行启动和页面探测。
+- 定义 `ReviewReport`、`EvidenceItem`、`Issue`、`ReviewSummary` 和 `ApprovalState`。
+- 将需求质量、启动命令、进程输出、浏览器动作计划、页面探测和执行诊断统一为证据项。
+- 根据证据生成带严重程度、类别、预期结果、实际结果、证据编号和建议的问题清单。
+- 问题默认进入 `pending` 审批状态，为后续用户接受、拒绝或忽略修改建议预留接口。
+- 单元测试增加到 27 个，严格模式 Clippy 无警告。
+
+### 2026-06-16
+
+- 明确平台总体定位不局限于 Web 项目。
+- 将 Web 调整为课程版本的首个适配目标，而不是系统能力边界。
+- 补充项目适配器、测试执行器、证据采集器和报告渲染器等扩展机制。
+- 开启并完成 M2 需求解析阶段。
+- 新增 `requirements` 子命令，支持文件或目录输入。
+- 实现需求模型、验收标准模型、测试计划模型、质量提示和执行器建议。
+- 增加演示用需求文档 `docs/specprobe-requirements.md`。
+- 开启并完成 M3 AI Provider 阶段。
+- 新增 `ai` 子命令，默认使用离线 Mock Provider。
+- 定义 `AiProvider`、`AiModelOutput`、`AiSuggestion` 和 `AiAnalysisReport`。
+- Mock Provider 可以基于需求质量提示生成澄清、补充验收标准、补充负向测试和补充证据等建议。
+- 预留 OpenAI 兼容接口和 Ollama 的配置检查路径。
+- 开启并完成 M4 项目启动与日志采集阶段。
+- 新增 `launch` 子命令，支持 dry-run 和受控执行。
+- 实现 Node/Rust/Python 启动命令识别、超时控制、进程终止、stdout/stderr 采集和敏感日志脱敏。
+- 修复 Windows PowerShell 写入 UTF-8 BOM `package.json` 导致解析失败的问题。
+- 开启并完成 M5 浏览器执行器基础阶段。
+- 新增 `browser` 子命令，支持 dry-run 和本地 HTTP 页面探测。
+- 将 `TestPlan` 转换为浏览器动作计划，包含打开页面、等待、交互、断言和采集证据。
+- 页面探测可采集 HTTP 状态码、页面标题、正文摘要和响应大小。
+- 增加 chunked HTTP 响应正文解码，避免输出传输编码噪声。
+- 单元测试增加到 25 个，严格模式 Clippy 无警告。
+
+### 2026-06-15
+
+- 确定项目主题为“基于 Rust 与大语言模型的智能代码审查及自动化测试平台”。
+- 完成 Rust 与 MSVC 环境检查和安装。
+- 创建 SpecProbe Git/Cargo 项目。
+- 建立本项目文档，明确范围、架构、安全原则和里程碑。
+- 完成 `doctor` 环境诊断，正确识别 Rust、MSVC、Node.js、npm、Docker 和 AI Provider。
+- 完成 `scan` 项目扫描，支持技术栈、需求文档、源码语言和测试文件识别。
+- 处理 Windows `.cmd` 命令执行、MSVC 环境加载和规范化路径前缀问题。
+- 6 个单元测试全部通过，严格模式 Clippy 无警告。

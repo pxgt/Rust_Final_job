@@ -1,0 +1,10 @@
+{
+  "name": "specprobe-buggy-task-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A deliberately flawed web application for the SpecProbe course demo.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  }
+}

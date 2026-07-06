@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="SpecProbe 课程演示用的任务看板，包含可复现的软件缺陷。"
+    />
+    <title>FocusBoard | SpecProbe Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="FocusBoard 首页">
+          <span class="brand-mark">F</span>
+          <span>FocusBoard</span>
+        </a>
+        <div class="topbar-meta">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>本地演示环境</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div>
+            <p class="eyebrow">TODAY'S WORKSPACE</p>
+            <h1>把今天真正重要的事，<br />放到眼前。</h1>
+            <p class="hero-copy">
+              一个轻量任务看板，也是 SpecProbe 用来展示需求审查、运行取证和缺陷报告的被测项目。
+            </p>
+          </div>
+          <div class="date-card" aria-label="当前演示日期">
+            <span class="date-label">DEMO DAY</span>
+            <strong>03</strong>
+            <span>JUL · 2026</span>
+          </div>
+        </section>
+
+        <section class="metrics" aria-label="任务统计">
+          <article>
+            <span>全部任务</span>
+            <strong id="total-count">0</strong>
+            <small>当前看板</small>
+          </article>
+          <article>
+            <span>已完成</span>
+            <strong id="completed-count">0</strong>
+            <small>保持节奏</small>
+          </article>
+          <article class="accent-card">
+            <span>今日焦点</span>
+            <strong>3</strong>
+            <small>优先事项</small>
+          </article>
+        </section>
+
+        <section class="workspace">
+          <div class="workspace-heading">
+            <div>
+              <p class="eyebrow">QUICK CAPTURE</p>
+              <h2>添加一个任务</h2>
+            </div>
+            <span class="keyboard-hint">Enter ↵</span>
+          </div>
+
+          <form id="task-form" novalidate>
+            <label for="task-input">任务标题</label>
+            <div class="input-row">
+              <input
+                id="task-input"
+                name="task"
+                type="text"
+                placeholder="例如：整理课程答辩演示"
+                autocomplete="off"
+              />
+              <button type="submit">添加任务</button>
+            </div>
+            <p id="validation-message" class="validation-message" role="alert"></p>
+          </form>
+
+          <div id="api-banner" class="api-banner" role="status" hidden>
+            <strong>部分数据未同步</strong>
+            <span>服务器任务暂时不可用，当前显示本地示例数据。</span>
+          </div>
+
+          <div class="list-toolbar">
+            <div>
+              <p class="eyebrow">TASK QUEUE</p>
+              <h2>任务列表</h2>
+            </div>
+            <div class="filters" aria-label="任务筛选">
+              <button class="filter-button active" data-filter="all" type="button">
+                全部
+              </button>
+              <button class="filter-button" data-filter="active" type="button">
+                进行中
+              </button>
+              <button class="filter-button" data-filter="completed" type="button">
+                已完成
+              </button>
+            </div>
+          </div>
+
+          <ul id="task-list" class="task-list" aria-live="polite"></ul>
+        </section>
+      </main>
+
+      <footer>
+        <span>FocusBoard demo build</span>
+        <span>Designed for evidence-driven testing</span>
+      </footer>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
