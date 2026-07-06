@@ -342,6 +342,7 @@ Phase 0 地基修复已于 2026-07-06 完成（CI 绿灯待首次远程构建确
 - 新增 GitHub Actions CI（ubuntu + windows 矩阵：fmt --check、clippy -D warnings、test）。
 - 新增测试基建：`assert_cmd` + `insta` dev 依赖；7 个 CLI 集成测试覆盖全部 8 个子命令的 JSON 出口；`tests/fixtures/demo-prd.md` 固定夹具；requirements JSON 快照锁定机器可读接口。
 - 当前测试规模：32 个单元测试 + 7 个集成测试，严格 Clippy 无警告。
+- 首次 CI：windows 全绿；ubuntu 暴露平台差异——dash 内建 echo 对文件块缓冲，SIGKILL 后 stdout 为空导致 long_running 测试失败，改用外部 `/bin/echo` 修复。
 - ROADMAP Phase 0 各项标记完成，下一步进入 Phase 1.1 异步化改造。
 
 ### 2026-07-06

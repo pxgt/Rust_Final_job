@@ -587,10 +587,12 @@ mod tests {
     // 孤儿子进程占用工作目录(进程树 kill 缺陷,ROADMAP 1.6),专属目录会删不掉。
     #[test]
     fn long_running_process_with_output_is_not_a_failure() {
+        // Linux 上必须用外部 /bin/echo:dash 内建 echo 对文件是块缓冲,
+        // SIGKILL 终止时缓冲未落盘,stdout 采集为空,long_running 判定不成立。
         let command = if cfg!(windows) {
             timeout_probe_command("echo specprobe-server & ping -n 30 127.0.0.1 > nul")
         } else {
-            timeout_probe_command("echo specprobe-server; sleep 30")
+            timeout_probe_command("/bin/echo specprobe-server; sleep 30")
         };
 
         let run = run_command(&command, 1).expect("command should run");
