@@ -33,9 +33,14 @@ pub async fn run() -> Result<()> {
         Command::Ai {
             path,
             provider,
+            no_cache,
             json,
         } => {
-            let report = ai::analyze_with_provider(&path, provider).await?;
+            let options = ai::AiOptions {
+                cache_dir: (!no_cache)
+                    .then(|| std::path::PathBuf::from(".specprobe").join("cache")),
+            };
+            let report = ai::analyze_with_provider(&path, provider, options).await?;
             output::print_ai_report(&report, json)?;
         }
         Command::Launch {

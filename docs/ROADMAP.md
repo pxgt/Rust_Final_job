@@ -69,13 +69,14 @@
 - 模块边界不动,工作量主要是 async 签名传染。必须最先做:后续服务器进程、浏览器 sidecar、AI 调用需要并发管理。
 - 实施记录:launch 超时从 50ms 轮询改为 `tokio::time::timeout` + `start_kill`,并加 `kill_on_drop` 兜底;AI Provider 从 `Box<dyn Trait>` 改枚举分发(async fn 与 dyn 不兼容),`analyze` 已是 async 签名,1.2 可直接填充传输;手写 TCP/HTTP/chunked 解析约 150 行删除,由 reqwest 取代;`doctor` 的短命 `--version` 探测有意保留同步 std::process,待 1.2 接入端点检查时一并转换。
 
-### 1.2 真 AI Provider(约 1 周)
+### 1.2 真 AI Provider(约 1 周)——已完成(2026-07-06)
 
 - OpenAI 兼容 chat completions 传输:优先 `response_format: json_schema`;对不支持的端点降级为"prompt 内嵌 schema + 响应校验 + 温度 0 + 重试 ≤2"。
 - Ollama `/api/chat`(本地免费,保证开发迭代和离线演示)。
 - 统一基础设施:指数退避重试、超时、token 用量统计(写入报告)、错误分类(认证/限流/网络/格式)。
 - **响应缓存**:请求体 hash → 响应,落盘 `.specprobe/cache/`。同时解决省钱、离线重放、演示确定性三件事。
 - Mock Provider 保留为 `--provider mock` 与单测路径。
+- 实施记录:OpenAI 兼容与 Ollama 共用 `ChatProtocol` 抽象(同一套重试/校验/缓存循环,仅请求体构造与字段提取不同);结构化输出采用 json_object 模式 + prompt 内嵌 schema + 校验反馈重问 ≤2 轮(DeepSeek 等端点不支持严格 json_schema,故不依赖);对不支持 `response_format` 的端点自动降级重试;缓存 key 为 SHA-256(provider+endpoint+model+messages),仅缓存已通过校验的输出;`ai` 命令新增 `--no-cache`;传输信息(attempts/cache_hit/token 用量)进入报告与终端输出;8 个基于本地假端点的离线单测覆盖成功解析、校验重试、5xx 退避、401 快速失败、缓存命中与 Ollama 协议。配置文件化(取代环境变量)属 2.2。
 - 配置从纯环境变量升级为配置文件 + 环境变量覆盖(配置文件全量设计在 2.2)。
 
 ### 1.3 需求理解升级为两级流水线(3~5 天)

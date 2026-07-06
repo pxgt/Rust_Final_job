@@ -11,7 +11,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
 - `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
 - `specprobe requirements <PATH>`:解析 Markdown/TXT 需求文档,生成需求、验收标准和初始测试计划(基于关键词规则)。
-- `specprobe ai <PATH>`:对需求解析结果生成改进建议(当前仅离线 Mock Provider 可用,基于确定性规则)。
+- `specprobe ai <PATH>`:通过大语言模型对需求解析结果生成结构化改进建议。支持 OpenAI 兼容端点(含 DeepSeek)与本地 Ollama 的真实调用,带 schema 校验重试、失败退避和 `.specprobe/cache` 响应缓存(`--no-cache` 关闭);默认仍为离线 Mock Provider,无需 API key。
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
 - `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对 `http://` 或 `https://` 页面采集状态码、标题和正文摘要(支持重定向跟随)。
 - `specprobe review <PATH>`:汇总需求质量、项目启动和页面探测证据,生成带审批状态的问题清单。
@@ -22,7 +22,6 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 以下能力**尚未实现**,是路线图 Phase 1 的核心工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
 
-- 真实大语言模型调用:OpenAI 兼容与 Ollama Provider 目前只有配置检查,无 HTTP 传输。
 - 真实浏览器自动化:当前"浏览器执行器"只做单页面 HTTP/HTTPS 探测,不执行点击、输入、DOM 断言、截图和 console/网络采集。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
@@ -48,6 +47,24 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 ```
 
 `review` 和 `propose` 默认进行计划级审查,不主动执行被测项目;需要真实启动和页面探测时添加 `--execute`。
+
+## AI Provider 配置
+
+`specprobe ai` 默认使用离线 Mock Provider。接入真实模型通过环境变量配置:
+
+```powershell
+# OpenAI 兼容端点(以 DeepSeek 为例)
+$env:OPENAI_BASE_URL = "https://api.deepseek.com"
+$env:OPENAI_API_KEY  = "sk-..."
+$env:OPENAI_MODEL    = "deepseek-chat"
+.\scripts\cargo-msvc.ps1 run -- ai .\docs\specprobe-requirements.md --provider openai-compatible
+
+# 本地 Ollama
+$env:OLLAMA_MODEL = "qwen2.5:7b"          # OLLAMA_BASE_URL 默认 http://127.0.0.1:11434
+.\scripts\cargo-msvc.ps1 run -- ai . --provider ollama
+```
+
+说明:模型输出受 JSON schema 约束(json_object 模式 + 校验失败自动带反馈重问 ≤2 轮);网络错误、429 和 5xx 指数退避重试 ≤3 次;响应按请求指纹缓存于 `.specprobe/cache/`,重复分析零 token 消耗,`--no-cache` 可关闭。若本机需经代理访问云端 API,请设置 `HTTPS_PROXY`(reqwest 自动读取)。
 
 ## 文档索引
 

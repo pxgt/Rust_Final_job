@@ -164,6 +164,22 @@ pub fn print_ai_report(report: &AiAnalysisReport, json: bool) -> Result<()> {
         "Input: {} requirement(s), schema: {}",
         report.request.requirement_count, report.request.schema_name
     );
+    let usage_text = report
+        .transport
+        .usage
+        .as_ref()
+        .map(|usage| {
+            format!(
+                ", tokens: {}+{}={}",
+                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+            )
+        })
+        .unwrap_or_default();
+    println!(
+        "Transport: attempts={}, cache_hit={}{usage_text}",
+        report.transport.attempts,
+        yes_no(report.transport.cache_hit)
+    );
     println!("Summary: {}", report.model_output.summary);
     println!("Confidence: {}", report.model_output.confidence);
 

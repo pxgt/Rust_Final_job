@@ -42,5 +42,10 @@ if (-not $CargoArgs) {
     $CargoArgs = @("build")
 }
 
+# 本机经代理(127.0.0.1:7897)访问 crates.io 时,schannel 证书吊销检查会失败
+# 并报 SSL connect error。仅对经由本脚本的 cargo 调用关闭吊销检查(项目级,
+# 不影响全局 cargo);权衡说明见 PROJECT.md "已知环境事项"。
+$env:CARGO_HTTP_CHECK_REVOKE = "false"
+
 & cargo @CargoArgs
 exit $LASTEXITCODE

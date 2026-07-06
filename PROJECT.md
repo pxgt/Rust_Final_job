@@ -317,7 +317,9 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 - 0.3 测试基建：完成，7 个 CLI 集成测试 + requirements JSON 快照（32 单测 + 7 集成全过）。
 - 0.4 小缺陷修复：完成（markdown 链接文本保留、launch `long_running` 语义、`.gitattributes`）。
 
-Phase 1.1 异步化改造已于 2026-07-06 完成。下一步：Phase 1.2 真 AI Provider（OpenAI 兼容 + Ollama 传输、结构化输出、响应缓存,见 ROADMAP §4）。
+Phase 1.1 异步化改造、1.2 真 AI Provider 已于 2026-07-06 完成。下一步：Phase 1.3 需求理解升级为两级流水线（规则粗筛 + LLM 精解析，见 ROADMAP §4）。
+
+AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `OPENAI_MODEL`（`OPENAI_BASE_URL` 默认 api.openai.com/v1，DeepSeek 设为 `https://api.deepseek.com` + 模型 `deepseek-chat`）；Ollama 需要 `OLLAMA_MODEL`（`OLLAMA_BASE_URL` 默认 127.0.0.1:11434）；云端调用经代理时设置 `HTTPS_PROXY`。
 
 环境变量约定不变：Mock Provider 无需 API key；OpenAI 兼容接口需要 `OPENAI_API_KEY` 和 `OPENAI_MODEL`；本地 Ollama 需要 `OLLAMA_MODEL`。
 
@@ -334,6 +336,17 @@ Phase 1.1 异步化改造已于 2026-07-06 完成。下一步：Phase 1.2 真 AI
 | 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
 
 ## 12. 开发日志
+
+### 2026-07-06（深夜，Phase 1.2 完成）
+
+- 实现真实 AI 传输：OpenAI 兼容 chat completions 与 Ollama `/api/chat`，共用 `ChatProtocol` 抽象（重试/校验/缓存一套循环，端点差异只在请求体构造与字段提取）。
+- 结构化输出：json_object 模式 + prompt 内嵌 schema；模型输出经 serde 严格校验（含 requirement_id 引用校验），失败带反馈重问 ≤2 轮，最后一轮宽容过滤未知 ID；自动剥离 markdown 代码围栏。
+- 可靠性：网络错误/429/5xx 指数退避 ≤3 次；4xx 快速失败；对不支持 `response_format` 的端点自动降级。
+- 响应缓存：SHA-256 请求指纹 → `.specprobe/cache/<hash>.json`，只缓存已验证输出，命中时零网络请求；`ai` 命令新增 `--no-cache`。
+- 报告新增 `transport` 字段（attempts / cache_hit / token 用量），终端与 JSON 同步输出。
+- 依赖新增 `sha2`；`scripts/cargo-msvc.ps1` 内置 `CARGO_HTTP_CHECK_REVOKE=false`（项目级方案 B，用户知情选择，替代被拒的全局 config 写入）。
+- 新增 8 个基于本地假 HTTP 端点的离线单测（结构化解析、Authorization 头、校验重试、5xx 退避、401 快速失败、缓存命中、Ollama 协议、围栏剥离）。当前 39 单测 + 7 集成，严格 Clippy 无警告。
+- 真机验收待用户提供 DeepSeek key 后进行（`OPENAI_BASE_URL=https://api.deepseek.com`）。
 
 ### 2026-07-06（晚间，Phase 1.1 完成）
 

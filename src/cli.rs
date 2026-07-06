@@ -49,6 +49,9 @@ pub enum Command {
         /// AI provider to use. Mock works without API keys.
         #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
         provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
