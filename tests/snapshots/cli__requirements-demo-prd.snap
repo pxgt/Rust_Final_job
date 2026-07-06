@@ -1,0 +1,263 @@
+---
+source: tests/cli.rs
+expression: report
+---
+{
+  "diagnostics": [
+    {
+      "message": "vague-language at demo-prd.md:11 - 包含较难直接验证的模糊词，需要补充量化标准。",
+      "severity": "info"
+    },
+    {
+      "message": "missing-observable-result at demo-prd.md:11 - 缺少明确的输出、状态变化或错误反馈。",
+      "severity": "info"
+    }
+  ],
+  "documents": [
+    {
+      "path": "demo-prd.md",
+      "requirement_count": 4,
+      "title": "迷你任务看板需求"
+    }
+  ],
+  "requirements": [
+    {
+      "acceptance_criteria": [
+        {
+          "evidence": [
+            "runtime_result",
+            "screenshot",
+            "log"
+          ],
+          "id": "REQ-001-AC-01",
+          "statement": "执行与需求“用户必须可以在输入框中添加新任务，并在列表中显示新任务”对应的操作后，系统应产生可观察且与需求一致的结果。"
+        }
+      ],
+      "category": "ui",
+      "description": "用户必须可以在输入框中添加新任务，并在列表中显示新任务。",
+      "id": "REQ-001",
+      "priority": "must",
+      "quality_flags": [],
+      "source": {
+        "line": 5,
+        "path": "demo-prd.md"
+      },
+      "title": "用户必须可以在输入框中添加新任务，并在列表中显示新任务"
+    },
+    {
+      "acceptance_criteria": [
+        {
+          "evidence": [
+            "runtime_result",
+            "manual_observation"
+          ],
+          "id": "REQ-002-AC-01",
+          "statement": "执行与需求“系统必须拒绝空白任务，并显示“任务内容不能为空”提示”对应的操作后，系统应产生可观察且与需求一致的结果。"
+        }
+      ],
+      "category": "functional",
+      "description": "系统必须拒绝空白任务，并显示“任务内容不能为空”提示。",
+      "id": "REQ-002",
+      "priority": "must",
+      "quality_flags": [],
+      "source": {
+        "line": 6,
+        "path": "demo-prd.md"
+      },
+      "title": "系统必须拒绝空白任务，并显示“任务内容不能为空”提示"
+    },
+    {
+      "acceptance_criteria": [
+        {
+          "evidence": [
+            "runtime_result",
+            "network_trace",
+            "log"
+          ],
+          "id": "REQ-003-AC-01",
+          "statement": "执行与需求“接口 /api/tasks 必须返回 JSON 任务列表”对应的操作后，系统应产生可观察且与需求一致的结果。"
+        },
+        {
+          "evidence": [
+            "runtime_result",
+            "log",
+            "network_trace"
+          ],
+          "id": "REQ-003-AC-02",
+          "statement": "异常输入、权限不足或失败响应应被明确处理，并留下可检查的错误信息。"
+        }
+      ],
+      "category": "api",
+      "description": "接口 /api/tasks 必须返回 JSON 任务列表。",
+      "id": "REQ-003",
+      "priority": "must",
+      "quality_flags": [],
+      "source": {
+        "line": 7,
+        "path": "demo-prd.md"
+      },
+      "title": "接口 /api/tasks 必须返回 JSON 任务列表"
+    },
+    {
+      "acceptance_criteria": [
+        {
+          "evidence": [
+            "runtime_result",
+            "screenshot",
+            "log"
+          ],
+          "id": "REQ-004-AC-01",
+          "statement": "执行与需求“页面应该简单友好”对应的操作后，系统应产生可观察且与需求一致的结果。"
+        },
+        {
+          "evidence": [
+            "manual_observation"
+          ],
+          "id": "REQ-004-AC-02",
+          "statement": "需求中的模糊描述需要被量化或补充为可判断的验收条件。"
+        }
+      ],
+      "category": "ui",
+      "description": "页面应该简单友好。",
+      "id": "REQ-004",
+      "priority": "should",
+      "quality_flags": [
+        {
+          "kind": "vague_language",
+          "message": "包含较难直接验证的模糊词，需要补充量化标准。"
+        },
+        {
+          "kind": "missing_observable_result",
+          "message": "缺少明确的输出、状态变化或错误反馈。"
+        }
+      ],
+      "source": {
+        "line": 11,
+        "path": "demo-prd.md"
+      },
+      "title": "页面应该简单友好"
+    }
+  ],
+  "source": "[fixture-path]",
+  "test_plan": {
+    "cases": [
+      {
+        "executor_hint": "browser",
+        "expected_result": "执行与需求“用户必须可以在输入框中添加新任务，并在列表中显示新任务”对应的操作后，系统应产生可观察且与需求一致的结果。",
+        "id": "TC-001",
+        "requirement_id": "REQ-001",
+        "steps": [
+          {
+            "action": "locate_entry_point",
+            "input": null,
+            "target": "找到与该需求相关的功能入口、接口或命令。"
+          },
+          {
+            "action": "perform_requirement_action",
+            "input": "用户必须可以在输入框中添加新任务，并在列表中显示新任务。",
+            "target": "执行需求描述的核心操作。"
+          },
+          {
+            "action": "observe_result",
+            "input": null,
+            "target": "检查运行结果是否满足验收标准。"
+          },
+          {
+            "action": "collect_evidence",
+            "input": null,
+            "target": "采集输出、日志、截图、网络记录或源码位置作为证据。"
+          }
+        ],
+        "title": "验证 用户必须可以在输入框中添加新任务，并在列表中显示新任务"
+      },
+      {
+        "executor_hint": "generic",
+        "expected_result": "执行与需求“系统必须拒绝空白任务，并显示“任务内容不能为空”提示”对应的操作后，系统应产生可观察且与需求一致的结果。",
+        "id": "TC-002",
+        "requirement_id": "REQ-002",
+        "steps": [
+          {
+            "action": "locate_entry_point",
+            "input": null,
+            "target": "找到与该需求相关的功能入口、接口或命令。"
+          },
+          {
+            "action": "perform_requirement_action",
+            "input": "系统必须拒绝空白任务，并显示“任务内容不能为空”提示。",
+            "target": "执行需求描述的核心操作。"
+          },
+          {
+            "action": "observe_result",
+            "input": null,
+            "target": "检查运行结果是否满足验收标准。"
+          },
+          {
+            "action": "collect_evidence",
+            "input": null,
+            "target": "采集输出、日志、截图、网络记录或源码位置作为证据。"
+          }
+        ],
+        "title": "验证 系统必须拒绝空白任务，并显示“任务内容不能为空”提示"
+      },
+      {
+        "executor_hint": "api",
+        "expected_result": "执行与需求“接口 /api/tasks 必须返回 JSON 任务列表”对应的操作后，系统应产生可观察且与需求一致的结果。",
+        "id": "TC-003",
+        "requirement_id": "REQ-003",
+        "steps": [
+          {
+            "action": "locate_entry_point",
+            "input": null,
+            "target": "找到与该需求相关的功能入口、接口或命令。"
+          },
+          {
+            "action": "perform_requirement_action",
+            "input": "接口 /api/tasks 必须返回 JSON 任务列表。",
+            "target": "执行需求描述的核心操作。"
+          },
+          {
+            "action": "observe_result",
+            "input": null,
+            "target": "检查运行结果是否满足验收标准。"
+          },
+          {
+            "action": "collect_evidence",
+            "input": null,
+            "target": "采集输出、日志、截图、网络记录或源码位置作为证据。"
+          }
+        ],
+        "title": "验证 接口 /api/tasks 必须返回 JSON 任务列表"
+      },
+      {
+        "executor_hint": "manual_review",
+        "expected_result": "执行与需求“页面应该简单友好”对应的操作后，系统应产生可观察且与需求一致的结果。",
+        "id": "TC-004",
+        "requirement_id": "REQ-004",
+        "steps": [
+          {
+            "action": "locate_entry_point",
+            "input": null,
+            "target": "找到与该需求相关的功能入口、接口或命令。"
+          },
+          {
+            "action": "perform_requirement_action",
+            "input": "页面应该简单友好。",
+            "target": "执行需求描述的核心操作。"
+          },
+          {
+            "action": "observe_result",
+            "input": null,
+            "target": "检查运行结果是否满足验收标准。"
+          },
+          {
+            "action": "collect_evidence",
+            "input": null,
+            "target": "采集输出、日志、截图、网络记录或源码位置作为证据。"
+          }
+        ],
+        "title": "验证 页面应该简单友好"
+      }
+    ],
+    "name": "Generated acceptance test plan"
+  }
+}
