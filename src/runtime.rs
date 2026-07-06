@@ -71,6 +71,9 @@ pub struct LaunchExecution {
     pub dry_run: bool,
     pub success: bool,
     pub timed_out: bool,
+    /// 超时被终止前仍在运行且已产生输出的进程,视为长驻服务而非失败。
+    /// 这是临时启发式,基于就绪探测的托管生命周期见 ROADMAP 1.6。
+    pub long_running: bool,
     pub exit_code: Option<i32>,
     pub duration_ms: u128,
     pub timeout_secs: u64,
@@ -156,6 +159,7 @@ pub fn launch_project(
                 dry_run: true,
                 success: false,
                 timed_out: false,
+                long_running: false,
                 exit_code: None,
                 duration_ms: 0,
                 timeout_secs,
@@ -174,17 +178,24 @@ pub fn launch_project(
     let run = run_command(&command, timeout_secs)?;
     let mut diagnostics = Vec::new();
 
-    if run.execution.timed_out {
+    if run.execution.long_running {
         diagnostics.push(LaunchDiagnostic {
-            severity: RuntimeDiagnosticSeverity::Warning,
-            message: "Process exceeded the timeout and was killed.".to_owned(),
+            severity: RuntimeDiagnosticSeverity::Info,
+            message: "Process was still running with output when the timeout elapsed; treated as a long-running service, not a failure.".to_owned(),
         });
-    }
-    if !run.execution.success {
-        diagnostics.push(LaunchDiagnostic {
-            severity: RuntimeDiagnosticSeverity::Error,
-            message: "Process did not exit successfully.".to_owned(),
-        });
+    } else {
+        if run.execution.timed_out {
+            diagnostics.push(LaunchDiagnostic {
+                severity: RuntimeDiagnosticSeverity::Warning,
+                message: "Process exceeded the timeout and was killed.".to_owned(),
+            });
+        }
+        if !run.execution.success {
+            diagnostics.push(LaunchDiagnostic {
+                severity: RuntimeDiagnosticSeverity::Error,
+                message: "Process did not exit successfully.".to_owned(),
+            });
+        }
     }
 
     Ok(LaunchReport {
@@ -371,12 +382,15 @@ fn run_command(command: &LaunchCommand, timeout_secs: u64) -> Result<CommandRun,
     let stderr_excerpt = read_redacted_excerpt(&stderr_path);
     let _ = fs::remove_dir_all(&log_dir);
 
+    let long_running = timed_out && (!stdout_excerpt.is_empty() || !stderr_excerpt.is_empty());
+
     Ok(CommandRun {
         execution: LaunchExecution {
             attempted: true,
             dry_run: false,
-            success: exit_status.success() && !timed_out,
+            success: (exit_status.success() && !timed_out) || long_running,
             timed_out,
+            long_running,
             exit_code: exit_status.code(),
             duration_ms,
             timeout_secs,
@@ -567,6 +581,56 @@ mod tests {
         assert!(run.execution.success);
         assert!(run.stdout_excerpt.contains("specprobe-runtime"));
         fs::remove_dir_all(root).expect("remove test project");
+    }
+
+    // 下面两个超时测试直接把系统临时目录当工作目录:被杀的 cmd/sh 可能留下
+    // 孤儿子进程占用工作目录(进程树 kill 缺陷,ROADMAP 1.6),专属目录会删不掉。
+    #[test]
+    fn long_running_process_with_output_is_not_a_failure() {
+        let command = if cfg!(windows) {
+            timeout_probe_command("echo specprobe-server & ping -n 30 127.0.0.1 > nul")
+        } else {
+            timeout_probe_command("echo specprobe-server; sleep 30")
+        };
+
+        let run = run_command(&command, 1).expect("command should run");
+
+        assert!(run.execution.timed_out);
+        assert!(run.execution.long_running);
+        assert!(run.execution.success);
+        assert!(run.stdout_excerpt.contains("specprobe-server"));
+    }
+
+    #[test]
+    fn silent_timeout_stays_a_failure() {
+        let command = if cfg!(windows) {
+            timeout_probe_command("ping -n 30 127.0.0.1 > nul")
+        } else {
+            timeout_probe_command("sleep 30")
+        };
+
+        let run = run_command(&command, 1).expect("command should run");
+
+        assert!(run.execution.timed_out);
+        assert!(!run.execution.long_running);
+        assert!(!run.execution.success);
+    }
+
+    fn timeout_probe_command(script: &str) -> LaunchCommand {
+        let (program, mut args) = if cfg!(windows) {
+            ("cmd".to_owned(), vec!["/d".to_owned(), "/c".to_owned()])
+        } else {
+            ("sh".to_owned(), vec!["-c".to_owned()])
+        };
+        args.push(script.to_owned());
+
+        LaunchCommand {
+            program,
+            args,
+            working_directory: std::env::temp_dir().display().to_string(),
+            source: "test".to_owned(),
+            confidence: CommandConfidence::High,
+        }
     }
 
     #[test]

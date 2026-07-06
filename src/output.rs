@@ -214,11 +214,12 @@ pub fn print_launch_report(report: &LaunchReport, json: bool) -> Result<()> {
         report.command.source, report.command.confidence
     );
     println!(
-        "Execution: attempted={}, dry-run={}, success={}, timed-out={}, exit-code={}",
+        "Execution: attempted={}, dry-run={}, success={}, timed-out={}, long-running={}, exit-code={}",
         yes_no(report.execution.attempted),
         yes_no(report.execution.dry_run),
         yes_no(report.execution.success),
         yes_no(report.execution.timed_out),
+        yes_no(report.execution.long_running),
         report
             .execution
             .exit_code

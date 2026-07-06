@@ -373,12 +373,13 @@ fn collect_launch_evidence(
                 None,
                 format!("Launch command: {command_line}"),
                 format!(
-                    "adapter={}, source={}, dry_run={}, success={}, timed_out={}",
+                    "adapter={}, source={}, dry_run={}, success={}, timed_out={}, long_running={}",
                     report.adapter,
                     report.command.source,
                     report.execution.dry_run,
                     report.execution.success,
-                    report.execution.timed_out
+                    report.execution.timed_out,
+                    report.execution.long_running
                 ),
             );
 

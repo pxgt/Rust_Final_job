@@ -563,13 +563,39 @@ fn strip_checkbox(text: &str) -> &str {
 }
 
 fn strip_inline_markdown(text: &str) -> String {
-    text.trim()
+    strip_markdown_links(text.trim())
         .trim_matches('`')
         .replace("**", "")
         .replace("__", "")
         .replace(['[', ']'], "")
         .trim()
         .to_owned()
+}
+
+/// 把 `[文字](url)` 和 `![alt](url)` 替换为纯文字,丢弃 URL,避免链接目标混入需求描述。
+fn strip_markdown_links(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(open) = rest.find('[') {
+        let Some(separator) = rest[open..].find("](").map(|offset| open + offset) else {
+            break;
+        };
+        let Some(close) = rest[separator + 2..]
+            .find(')')
+            .map(|offset| separator + 2 + offset)
+        else {
+            break;
+        };
+
+        let before = rest[..open].strip_suffix('!').unwrap_or(&rest[..open]);
+        result.push_str(before);
+        result.push_str(&rest[open + 1..separator]);
+        rest = &rest[close + 1..];
+    }
+
+    result.push_str(rest);
+    result
 }
 
 fn is_requirement_candidate(text: &str, headings: &[String], list_item: bool) -> bool {
@@ -906,7 +932,7 @@ mod tests {
 
     use super::{
         ExecutorHint, RequirementCategory, RequirementPriority, analyze_requirements,
-        classify_category, classify_priority, parse_heading,
+        classify_category, classify_priority, parse_heading, strip_inline_markdown,
     };
 
     #[test]
@@ -1039,6 +1065,22 @@ mod tests {
         assert_eq!(
             classify_category("页面应该显示错误提示", &[]),
             RequirementCategory::Ui
+        );
+    }
+
+    #[test]
+    fn keeps_link_text_and_drops_urls() {
+        assert_eq!(
+            strip_inline_markdown("详见 [接口规范](https://example.com/spec) 第 3 节"),
+            "详见 接口规范 第 3 节"
+        );
+        assert_eq!(
+            strip_inline_markdown("![登录页](img/login.png) 页面必须显示错误提示"),
+            "登录页 页面必须显示错误提示"
+        );
+        assert_eq!(
+            strip_inline_markdown("**加粗** 与 `代码` 不受影响"),
+            "加粗 与 `代码` 不受影响"
         );
     }
 
