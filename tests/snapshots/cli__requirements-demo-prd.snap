@@ -1,5 +1,6 @@
 ---
 source: tests/cli.rs
+assertion_line: 69
 expression: report
 ---
 {
@@ -20,6 +21,7 @@ expression: report
       "title": "迷你任务看板需求"
     }
   ],
+  "engine": "rule_based",
   "requirements": [
     {
       "acceptance_criteria": [

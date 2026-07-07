@@ -22,9 +22,10 @@ const TRANSPORT_ATTEMPTS: u32 = 3;
 /// 校验层重试:模型输出不符合 schema 时,带反馈重问,最多 2 轮。
 const VALIDATION_ROUNDS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum AiProviderKind {
+    #[default]
     Mock,
     OpenaiCompatible,
     Ollama,
@@ -156,6 +157,15 @@ pub async fn analyze_with_provider(
     options: AiOptions,
 ) -> Result<AiAnalysisReport, AiError> {
     let base_report = analyze_requirements(path)?;
+    analyze_report_with_provider(base_report, provider_kind, options).await
+}
+
+/// 对已有需求报告(规则或 LLM 精解析产物)运行建议分析。
+pub async fn analyze_report_with_provider(
+    base_report: RequirementReport,
+    provider_kind: AiProviderKind,
+    options: AiOptions,
+) -> Result<AiAnalysisReport, AiError> {
     let request = build_request_preview(&base_report);
     let cache = options.cache_dir.map(|dir| AiCache { dir });
 
@@ -265,8 +275,8 @@ fn build_messages(report: &RequirementReport) -> Vec<Value> {
 // 响应缓存:请求指纹 -> 已验证的模型输出原文,尽力而为,失败不阻断分析。
 // ---------------------------------------------------------------------------
 
-struct AiCache {
-    dir: PathBuf,
+pub(crate) struct AiCache {
+    pub(crate) dir: PathBuf,
 }
 
 impl AiCache {
@@ -299,24 +309,49 @@ fn cache_key(provider: &str, endpoint: &str, model: &str, messages: &[Value]) ->
 // 仅请求体构造与响应字段提取不同。
 // ---------------------------------------------------------------------------
 
-struct ChatProtocol {
-    provider: &'static str,
-    endpoint: String,
-    api_key: Option<String>,
-    model: String,
+pub(crate) struct ChatProtocol {
+    pub(crate) provider: &'static str,
+    pub(crate) endpoint: String,
+    pub(crate) api_key: Option<String>,
+    pub(crate) model: String,
     /// 是否在 400 且提示 response_format 不支持时降级重试(OpenAI 兼容端点差异)。
-    supports_format_fallback: bool,
-    build_body: fn(model: &str, messages: &[Value], include_format: bool) -> Value,
-    extract_content: fn(&Value) -> Option<String>,
-    extract_usage: fn(&Value) -> Option<AiUsage>,
+    pub(crate) supports_format_fallback: bool,
+    pub(crate) build_body: fn(model: &str, messages: &[Value], include_format: bool) -> Value,
+    pub(crate) extract_content: fn(&Value) -> Option<String>,
+    pub(crate) extract_usage: fn(&Value) -> Option<AiUsage>,
 }
 
-async fn run_chat_analysis(
+/// 测试辅助:构造指向指定端点的 OpenAI 风格协议,避免测试修改进程级环境变量。
+#[cfg(test)]
+pub(crate) fn test_openai_protocol(base_url: String) -> ChatProtocol {
+    OpenAiCompatibleProvider {
+        api_key: Some("test-key".to_owned()),
+        base_url,
+        model: Some("test-model".to_owned()),
+    }
+    .chat_protocol()
+    .expect("test protocol is configured")
+}
+
+/// 按 Provider 类型构造聊天协议;Mock 返回 None(离线路径,无传输)。
+pub(crate) fn chat_protocol_for(kind: AiProviderKind) -> Result<Option<ChatProtocol>, AiError> {
+    match kind {
+        AiProviderKind::Mock => Ok(None),
+        AiProviderKind::OpenaiCompatible => OpenAiCompatibleProvider::from_env()
+            .chat_protocol()
+            .map(Some),
+        AiProviderKind::Ollama => OllamaProvider::from_env().chat_protocol().map(Some),
+    }
+}
+
+/// 通用的"聊天 → JSON 输出"循环:缓存、传输重试、schema 校验反馈重问。
+/// `parse(content, lenient)` 负责解析与校验;lenient 在最后一轮为 true。
+pub(crate) async fn run_chat_json<T>(
     protocol: &ChatProtocol,
-    report: &RequirementReport,
+    base_messages: Vec<Value>,
     cache: Option<&AiCache>,
-) -> Result<(AiModelOutput, AiTransportInfo), AiError> {
-    let base_messages = build_messages(report);
+    parse: impl Fn(&str, bool) -> Result<T, String>,
+) -> Result<(T, AiTransportInfo), AiError> {
     let key = cache_key(
         protocol.provider,
         &protocol.endpoint,
@@ -326,7 +361,7 @@ async fn run_chat_analysis(
 
     if let Some(store) = cache
         && let Some(cached) = store.read(&key)
-        && let Ok(output) = parse_model_output(&cached, report, true)
+        && let Ok(output) = parse(&cached, true)
     {
         return Ok((
             output,
@@ -387,7 +422,7 @@ async fn run_chat_analysis(
 
         round += 1;
         let lenient = round >= VALIDATION_ROUNDS;
-        match parse_model_output(&content, report, lenient) {
+        match parse(&content, lenient) {
             Ok(output) => {
                 if let Some(store) = cache {
                     store.write(&key, &content);
@@ -518,7 +553,7 @@ fn parse_model_output(
     ))
 }
 
-fn strip_code_fence(content: &str) -> &str {
+pub(crate) fn strip_code_fence(content: &str) -> &str {
     let trimmed = content.trim();
     let Some(rest) = trimmed.strip_prefix("```") else {
         return trimmed;
@@ -606,11 +641,7 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    async fn analyze(
-        &self,
-        report: &RequirementReport,
-        cache: Option<&AiCache>,
-    ) -> Result<(AiModelOutput, AiTransportInfo), AiError> {
+    fn chat_protocol(&self) -> Result<ChatProtocol, AiError> {
         const PROVIDER: &str = "OpenAI-compatible";
         let Some(api_key) = self.api_key.clone() else {
             return Err(AiError::MissingConfig {
@@ -625,7 +656,7 @@ impl OpenAiCompatibleProvider {
             });
         };
 
-        let protocol = ChatProtocol {
+        Ok(ChatProtocol {
             provider: PROVIDER,
             endpoint: format!("{}/chat/completions", self.base_url.trim_end_matches('/')),
             api_key: Some(api_key),
@@ -662,9 +693,22 @@ impl OpenAiCompatibleProvider {
                         .unwrap_or(0),
                 })
             },
-        };
+        })
+    }
 
-        run_chat_analysis(&protocol, report, cache).await
+    async fn analyze(
+        &self,
+        report: &RequirementReport,
+        cache: Option<&AiCache>,
+    ) -> Result<(AiModelOutput, AiTransportInfo), AiError> {
+        let protocol = self.chat_protocol()?;
+        run_chat_json(
+            &protocol,
+            build_messages(report),
+            cache,
+            |content, lenient| parse_model_output(content, report, lenient),
+        )
+        .await
     }
 }
 
@@ -695,11 +739,7 @@ impl OllamaProvider {
         }
     }
 
-    async fn analyze(
-        &self,
-        report: &RequirementReport,
-        cache: Option<&AiCache>,
-    ) -> Result<(AiModelOutput, AiTransportInfo), AiError> {
+    fn chat_protocol(&self) -> Result<ChatProtocol, AiError> {
         const PROVIDER: &str = "Ollama";
         let Some(model) = self.model.clone() else {
             return Err(AiError::MissingConfig {
@@ -708,7 +748,7 @@ impl OllamaProvider {
             });
         };
 
-        let protocol = ChatProtocol {
+        Ok(ChatProtocol {
             provider: PROVIDER,
             endpoint: format!("{}/api/chat", self.base_url.trim_end_matches('/')),
             api_key: None,
@@ -741,9 +781,22 @@ impl OllamaProvider {
                     total_tokens: prompt_tokens + completion_tokens,
                 })
             },
-        };
+        })
+    }
 
-        run_chat_analysis(&protocol, report, cache).await
+    async fn analyze(
+        &self,
+        report: &RequirementReport,
+        cache: Option<&AiCache>,
+    ) -> Result<(AiModelOutput, AiTransportInfo), AiError> {
+        let protocol = self.chat_protocol()?;
+        run_chat_json(
+            &protocol,
+            build_messages(report),
+            cache,
+            |content, lenient| parse_model_output(content, report, lenient),
+        )
+        .await
     }
 }
 
@@ -898,16 +951,12 @@ impl fmt::Display for Confidence {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         AiCache, AiOptions, AiProviderKind, Confidence, OllamaProvider, OpenAiCompatibleProvider,
         SuggestionSeverity, SuggestionType, analyze_with_provider, parse_model_output,
     };
-    use crate::requirements::{RequirementReport, analyze_requirements};
+    use crate::testutil::{chat_response, requirement_fixture, spawn_chat_server, temp_project};
 
     const VALID_OUTPUT: &str = r#"{"summary":"分析完成","suggestions":[{"requirement_id":"REQ-001","suggestion_type":"clarify_requirement","severity":"high","message":"补充可观察的登录成功提示","rationale":"便于自动断言"}],"follow_up_questions":["登录成功后跳转到哪个页面?"],"confidence":"medium"}"#;
 
@@ -1135,101 +1184,5 @@ mod tests {
 
         let output = parse_model_output(&content, &report, true).expect("lenient mode filters");
         assert!(output.suggestions.is_empty());
-    }
-
-    fn requirement_fixture(prefix: &str) -> RequirementReport {
-        let root = temp_project(prefix);
-        let file = root.join("PRD.md");
-        fs::write(&file, "- 系统必须显示登录成功提示。").expect("write requirement");
-        let report = analyze_requirements(&file).expect("requirement analysis succeeds");
-        fs::remove_dir_all(root).expect("remove test project");
-        report
-    }
-
-    fn chat_response(content: &str) -> String {
-        serde_json::json!({
-            "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
-        })
-        .to_string()
-    }
-
-    /// 顺序应答的假聊天端点:每个连接读完整请求后返回预置响应,
-    /// 线程返回捕获到的原始请求文本。
-    fn spawn_chat_server(
-        responses: Vec<(u16, String)>,
-    ) -> (String, thread::JoinHandle<Vec<String>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake ai server");
-        let port = listener.local_addr().expect("read local addr").port();
-        let handle = thread::spawn(move || {
-            let mut captured = Vec::new();
-            for (status, body) in responses {
-                let (mut stream, _) = listener.accept().expect("accept connection");
-                captured.push(read_http_request(&mut stream));
-                let reason = match status {
-                    200 => "OK",
-                    400 => "Bad Request",
-                    401 => "Unauthorized",
-                    429 => "Too Many Requests",
-                    500 => "Internal Server Error",
-                    _ => "Status",
-                };
-                let response = format!(
-                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("write response");
-            }
-            captured
-        });
-        (format!("http://127.0.0.1:{port}"), handle)
-    }
-
-    fn read_http_request(stream: &mut TcpStream) -> String {
-        let mut buffer = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        let header_end = loop {
-            let read = stream.read(&mut chunk).expect("read request");
-            buffer.extend_from_slice(&chunk[..read]);
-            if let Some(position) = find_subslice(&buffer, b"\r\n\r\n") {
-                break position + 4;
-            }
-            if read == 0 {
-                return String::from_utf8_lossy(&buffer).into_owned();
-            }
-        };
-
-        let headers = String::from_utf8_lossy(&buffer[..header_end]).to_ascii_lowercase();
-        let content_length = headers
-            .lines()
-            .find_map(|line| line.strip_prefix("content-length:"))
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .unwrap_or(0);
-        while buffer.len() < header_end + content_length {
-            let read = stream.read(&mut chunk).expect("read request body");
-            if read == 0 {
-                break;
-            }
-            buffer.extend_from_slice(&chunk[..read]);
-        }
-        String::from_utf8_lossy(&buffer).into_owned()
-    }
-
-    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|window| window == needle)
-    }
-
-    fn temp_project(prefix: &str) -> std::path::PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
-        fs::create_dir_all(&root).expect("create temp project");
-        root
     }
 }

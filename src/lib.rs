@@ -3,16 +3,23 @@ pub mod browser;
 pub mod cli;
 pub mod doctor;
 pub mod output;
+pub mod refine;
 pub mod remediation;
 pub mod requirements;
 pub mod review;
 pub mod runtime;
 pub mod scanner;
+#[cfg(test)]
+pub(crate) mod testutil;
 
 use anyhow::Result;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
+
+fn cache_dir_unless(no_cache: bool) -> Option<std::path::PathBuf> {
+    (!no_cache).then(|| std::path::PathBuf::from(".specprobe").join("cache"))
+}
 
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
@@ -26,8 +33,20 @@ pub async fn run() -> Result<()> {
             let profile = scanner::scan_project(&path)?;
             output::print_project_profile(&profile, json)?;
         }
-        Command::Requirements { path, json } => {
-            let report = requirements::analyze_requirements(&path)?;
+        Command::Requirements {
+            path,
+            provider,
+            no_cache,
+            json,
+        } => {
+            let report = refine::analyze_requirements_with_refinement(
+                &path,
+                refine::RefineOptions {
+                    provider,
+                    cache_dir: cache_dir_unless(no_cache),
+                },
+            )
+            .await?;
             output::print_requirement_report(&report, json)?;
         }
         Command::Ai {
@@ -36,11 +55,23 @@ pub async fn run() -> Result<()> {
             no_cache,
             json,
         } => {
-            let options = ai::AiOptions {
-                cache_dir: (!no_cache)
-                    .then(|| std::path::PathBuf::from(".specprobe").join("cache")),
-            };
-            let report = ai::analyze_with_provider(&path, provider, options).await?;
+            // ai 命令与 requirements 共用两级流水线:先精解析需求,再生成建议。
+            let refined = refine::analyze_requirements_with_refinement(
+                &path,
+                refine::RefineOptions {
+                    provider,
+                    cache_dir: cache_dir_unless(no_cache),
+                },
+            )
+            .await?;
+            let report = ai::analyze_report_with_provider(
+                refined,
+                provider,
+                ai::AiOptions {
+                    cache_dir: cache_dir_unless(no_cache),
+                },
+            )
+            .await?;
             output::print_ai_report(&report, json)?;
         }
         Command::Launch {

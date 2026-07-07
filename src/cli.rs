@@ -37,6 +37,12 @@ pub enum Command {
         /// Requirement document or project directory to inspect.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// AI provider used to refine extraction. Mock keeps the offline rule engine.
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,

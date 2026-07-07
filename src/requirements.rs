@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const SKIPPED_DIRECTORIES: &[&str] = &[
@@ -64,10 +64,19 @@ pub enum RequirementError {
 #[derive(Debug, Clone, Serialize)]
 pub struct RequirementReport {
     pub source: String,
+    /// 本报告由哪一级流水线产出:规则引擎(粗筛/兜底)或 LLM 精解析。
+    pub engine: AnalysisEngine,
     pub documents: Vec<RequirementDocument>,
     pub requirements: Vec<Requirement>,
     pub test_plan: TestPlan,
     pub diagnostics: Vec<RequirementDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisEngine {
+    RuleBased,
+    LlmRefined,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,7 +104,7 @@ pub struct SourceLocation {
     pub line: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementCategory {
     Functional,
@@ -109,7 +118,7 @@ pub enum RequirementCategory {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementPriority {
     Must,
@@ -125,7 +134,7 @@ pub struct AcceptanceCriterion {
     pub evidence: Vec<EvidenceKind>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceKind {
     RuntimeResult,
@@ -142,7 +151,7 @@ pub struct RequirementQualityFlag {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QualityFlagKind {
     VagueLanguage,
@@ -282,6 +291,7 @@ pub fn analyze_requirements(path: &Path) -> Result<RequirementReport, Requiremen
 
     Ok(RequirementReport {
         source: display_path(&source),
+        engine: AnalysisEngine::RuleBased,
         documents,
         requirements,
         test_plan,
@@ -459,7 +469,7 @@ fn build_acceptance_criteria(
     criteria
 }
 
-fn build_test_plan(requirements: &[Requirement]) -> TestPlan {
+pub(crate) fn build_test_plan(requirements: &[Requirement]) -> TestPlan {
     let cases = requirements
         .iter()
         .enumerate()
@@ -758,7 +768,7 @@ fn has_observable_result(text: &str) -> bool {
     )
 }
 
-fn evidence_for_category(category: RequirementCategory) -> Vec<EvidenceKind> {
+pub(crate) fn evidence_for_category(category: RequirementCategory) -> Vec<EvidenceKind> {
     match category {
         RequirementCategory::Ui => vec![
             EvidenceKind::RuntimeResult,
@@ -921,6 +931,15 @@ impl fmt::Display for DiagnosticSeverity {
         formatter.write_str(match self {
             Self::Info => "info",
             Self::Warning => "warning",
+        })
+    }
+}
+
+impl fmt::Display for AnalysisEngine {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::RuleBased => "rule-based",
+            Self::LlmRefined => "llm-refined",
         })
     }
 }

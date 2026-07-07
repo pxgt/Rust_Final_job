@@ -10,7 +10,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 - `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
 - `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
-- `specprobe requirements <PATH>`:解析 Markdown/TXT 需求文档,生成需求、验收标准和初始测试计划(基于关键词规则)。
+- `specprobe requirements <PATH>`:两级流水线解析需求文档——规则引擎粗筛兜底,`--provider openai-compatible|ollama` 启用 LLM 精解析(带行号溯源、具体到页面/接口的验收标准,校验失败自动回退规则结果);测试计划始终由确定性代码从需求生成。
 - `specprobe ai <PATH>`:通过大语言模型对需求解析结果生成结构化改进建议。支持 OpenAI 兼容端点(含 DeepSeek)与本地 Ollama 的真实调用,带 schema 校验重试、失败退避和 `.specprobe/cache` 响应缓存(`--no-cache` 关闭);默认仍为离线 Mock Provider,无需 API key。
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
 - `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对 `http://` 或 `https://` 页面采集状态码、标题和正文摘要(支持重定向跟随)。

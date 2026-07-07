@@ -317,7 +317,7 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 - 0.3 测试基建：完成，7 个 CLI 集成测试 + requirements JSON 快照（32 单测 + 7 集成全过）。
 - 0.4 小缺陷修复：完成（markdown 链接文本保留、launch `long_running` 语义、`.gitattributes`）。
 
-Phase 1.1 异步化改造、1.2 真 AI Provider 已于 2026-07-06 完成。下一步：Phase 1.3 需求理解升级为两级流水线（规则粗筛 + LLM 精解析，见 ROADMAP §4）。
+Phase 1.1 异步化改造、1.2 真 AI Provider、1.3 需求理解两级流水线已于 2026-07-06 完成。下一步：Phase 1.4 真浏览器执行器（Playwright Node sidecar，见 ROADMAP §4）——Phase 1 最大单项。
 
 AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `OPENAI_MODEL`（`OPENAI_BASE_URL` 默认 api.openai.com/v1，DeepSeek 设为 `https://api.deepseek.com` + 模型 `deepseek-chat`）；Ollama 需要 `OLLAMA_MODEL`（`OLLAMA_BASE_URL` 默认 127.0.0.1:11434）；云端调用经代理时设置 `HTTPS_PROXY`。
 
@@ -336,6 +336,15 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 | 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
 
 ## 12. 开发日志
+
+### 2026-07-06（深夜二，Phase 1.3 完成）
+
+- 新增 `refine` 模块：需求理解两级流水线。规则引擎降级为候选粗筛与兜底；LLM 按文档逐个精解析（带行号全文 + 规则候选行提示 + scan 技术栈提示）。
+- LLM 线格式经 serde 严格校验：行号越界、空描述、缺验收标准会带反馈重问（≤2 轮），最后一轮宽容过滤无效条目；REQ/AC 编号与测试计划始终由确定性代码生成，AI 不直接产出计划。
+- `RequirementReport` 新增 `engine` 字段（rule_based / llm_refined）；`requirements` 与 `ai` 命令共用流水线（`--provider`，默认 mock=纯规则，原行为与 JSON 快照仅新增字段）。
+- 降级策略：传输/校验失败回退规则结果并附 Warning 诊断；MissingConfig（用户显式选择的 Provider 未配置）直接报错。
+- 1.2 传输层泛型化为 `run_chat_json`，建议分析与需求精解析共用重试/校验/缓存循环；测试辅助（假聊天端点等）提取到 `testutil` 模块。
+- 新增 5 个 refine 单测（mock 保持规则、LLM 替换需求并重建计划、传输失败回退、行号校验、验收标准必填）。当前 44 单测 + 7 集成，严格 Clippy 无警告。
 
 ### 2026-07-06（深夜，Phase 1.2 完成）
 

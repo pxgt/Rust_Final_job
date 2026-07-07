@@ -95,7 +95,8 @@ pub fn print_requirement_report(report: &RequirementReport, json: bool) -> Resul
 
     println!("Requirement analysis: {}", report.source);
     println!(
-        "Documents: {}, requirements: {}, test cases: {}",
+        "Engine: {}, documents: {}, requirements: {}, test cases: {}",
+        report.engine,
         report.documents.len(),
         report.requirements.len(),
         report.test_plan.cases.len()
