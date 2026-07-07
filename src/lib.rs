@@ -3,6 +3,7 @@ pub mod browser;
 pub mod cli;
 pub mod doctor;
 pub mod output;
+pub mod playwright;
 pub mod refine;
 pub mod remediation;
 pub mod requirements;
@@ -28,6 +29,9 @@ pub async fn run() -> Result<()> {
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();
             output::print_doctor_report(&report, json)?;
+        }
+        Command::SetupBrowser => {
+            playwright::setup_runner().await?;
         }
         Command::Scan { path, json } => {
             let profile = scanner::scan_project(&path)?;

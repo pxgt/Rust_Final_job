@@ -43,6 +43,7 @@ pub fn inspect_environment() -> DoctorReport {
     ];
 
     tools.push(inspect_msvc());
+    tools.push(inspect_playwright());
 
     let ai_providers = vec![
         inspect_env_provider("OpenAI-compatible API", "OPENAI_API_KEY"),
@@ -67,6 +68,12 @@ pub fn inspect_environment() -> DoctorReport {
     if !web_testing_ready {
         notes.push(
             "Node.js and npm are required before browser automation can be enabled.".to_owned(),
+        );
+    }
+    if web_testing_ready && !tool_available(&tools, "playwright") {
+        notes.push(
+            "Playwright runner is not installed; run `specprobe setup-browser` for full browser testing (HTTP probe is used until then)."
+                .to_owned(),
         );
     }
     if !ai_ready {
@@ -167,6 +174,28 @@ fn inspect_msvc() -> ToolCheck {
         } else {
             "Visual C++ build tools were not found.".to_owned()
         }),
+    }
+}
+
+fn inspect_playwright() -> ToolCheck {
+    match crate::playwright::detect_runner() {
+        Some(location) => ToolCheck {
+            name: "playwright".to_owned(),
+            available: true,
+            version: None,
+            path: Some(location.runner_js.display().to_string()),
+            note: None,
+        },
+        None => ToolCheck {
+            name: "playwright".to_owned(),
+            available: false,
+            version: None,
+            path: None,
+            note: Some(
+                "Runner not installed; run `specprobe setup-browser` (requires Node.js)."
+                    .to_owned(),
+            ),
+        },
     }
 }
 

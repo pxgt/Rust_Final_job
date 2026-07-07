@@ -23,6 +23,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Install the Playwright browser runner (requires Node.js).
+    SetupBrowser,
     /// Inspect a project and summarize its technology and test surface.
     Scan {
         /// Project directory to inspect.

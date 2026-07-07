@@ -13,7 +13,8 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe requirements <PATH>`:两级流水线解析需求文档——规则引擎粗筛兜底,`--provider openai-compatible|ollama` 启用 LLM 精解析(带行号溯源、具体到页面/接口的验收标准,校验失败自动回退规则结果);测试计划始终由确定性代码从需求生成。
 - `specprobe ai <PATH>`:通过大语言模型对需求解析结果生成结构化改进建议。支持 OpenAI 兼容端点(含 DeepSeek)与本地 Ollama 的真实调用,带 schema 校验重试、失败退避和 `.specprobe/cache` 响应缓存(`--no-cache` 关闭);默认仍为离线 Mock Provider,无需 API key。
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
-- `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划,并对 `http://` 或 `https://` 页面采集状态码、标题和正文摘要(支持重定向跟随)。
+- `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划并执行。装了 Playwright runner 时用真实浏览器打开页面,采集截图、console 错误、网络失败和可交互元素摘要,证据归档到 `.specprobe/runs/`;未装时自动降级为 `http`/`https` 页面探测(状态码、标题、正文摘要,支持重定向)。
+- `specprobe setup-browser`:一键安装 Playwright runner(`npm install` + `npx playwright install chromium`,需要 Node.js)。
 - `specprobe review <PATH>`:汇总需求质量、项目启动和页面探测证据,生成带审批状态的问题清单。
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
@@ -22,7 +23,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 以下能力**尚未实现**,是路线图 Phase 1 的核心工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
 
-- 真实浏览器自动化:当前"浏览器执行器"只做单页面 HTTP/HTTPS 探测,不执行点击、输入、DOM 断言、截图和 console/网络采集。
+- 需求到浏览器的具体交互步骤:当前浏览器执行器打开页面并深度取证(截图、console、网络、DOM 元素摘要),但把需求映射为具体的点击/输入/断言步骤(基于采集的 DOM 摘要)属于 Phase 1.5。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
 
@@ -65,6 +66,17 @@ $env:OLLAMA_MODEL = "qwen2.5:7b"          # OLLAMA_BASE_URL 默认 http://127.0.
 ```
 
 说明:模型输出受 JSON schema 约束(json_object 模式 + 校验失败自动带反馈重问 ≤2 轮);网络错误、429 和 5xx 指数退避重试 ≤3 次;响应按请求指纹缓存于 `.specprobe/cache/`,重复分析零 token 消耗,`--no-cache` 可关闭。若本机需经代理访问云端 API,请设置 `HTTPS_PROXY`(reqwest 自动读取)。
+
+## 浏览器测试
+
+真实浏览器执行由 Playwright Node sidecar([executors/playwright-runner](executors/playwright-runner))完成,SpecProbe 通过 stdin 发送 JSON 动作计划、读取 sidecar 回传的 NDJSON 事件。首次使用先安装:
+
+```powershell
+.\scripts\cargo-msvc.ps1 run -- setup-browser   # 或手动 cd executors/playwright-runner && npm install && npx playwright install chromium
+.\scripts\cargo-msvc.ps1 run -- browser .\demo\buggy-task-board\REQUIREMENTS.md --base-url http://127.0.0.1:4173
+```
+
+装好后 `browser`/`review --execute`/`propose --execute` 自动走 Playwright:打开页面、截图、采集 console 错误与网络失败、抓取可交互元素摘要,证据归档到 `.specprobe/runs/`。**未安装时自动降级为 HTTP 探测**,CI 与无 Node 环境不受影响;报告的 `backend` 字段标注实际使用的后端。
 
 ## 文档索引
 

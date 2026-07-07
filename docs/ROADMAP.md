@@ -86,15 +86,17 @@
 - 验收标准要求落到具体页面/接口,不再输出通用话术。
 - 实施记录:新增 `refine` 模块;`requirements`/`ai` 命令共用流水线(`--provider` 选择引擎,默认 mock=纯规则,行为与快照不变);LLM 按文档逐个精解析(带行号的全文 + 规则候选行提示 + scan 技术栈提示),线格式经 serde 严格校验(行号越界/空描述/缺验收标准会带反馈重问,最后一轮宽容过滤);报告新增 `engine` 字段(rule_based/llm_refined),测试计划与 REQ/AC 编号始终由确定性代码生成;传输/校验失败自动回退规则结果并附告警诊断,MissingConfig 则直接报错(用户显式选择的 Provider 未配置);1.2 的传输层泛型化为 `run_chat_json`,建议分析与需求精解析复用同一套重试/校验/缓存循环。
 
-### 1.4 真浏览器执行器(1.5~2 周,最大单项)
+### 1.4 真浏览器执行器(1.5~2 周,最大单项)——已完成(2026-07-07)
 
 - **技术决策:Playwright Node sidecar,不用纯 Rust CDP(chromiumoxide)。**理由:Playwright 自带 auto-wait、选择器引擎、截图、console/network 捕获、trace,稳定性远超自写 CDP;被测目标本就是 Web 项目,Node 已在环境假设内;符合"Rust 编排、执行器执行"的既定架构。
+- 实施记录:新增 `executors/playwright-runner/`(runner.mjs + package.json,stdin 收 JSON 计划、stdout 回 NDJSON 事件,协议版本 1,含 BOM 剥离);新增 `src/playwright.rs`(协议类型、`detect_runner`、`run_actions` 事件流聚合、`setup_runner`)。9 个动作原语全部在 sidecar 实现;1.4 的计划生成用通用采集序列(goto → wait_for_selector body → screenshot + 自动附带 console/网络/DOM 元素摘要),把需求映射为具体 selector 步骤留给 1.5(1.4 采集的 DOM 摘要正是其输入)。证据归档 `.specprobe/runs/browser-<id>/`(截图 PNG + console/network/snapshot JSON)。**关键降级设计**:探测不到 sidecar(如 CI 无 Node/Playwright,或未 `npm install`)时自动回退 HTTP 探测,报告 `backend` 字段标注 playwright/http_probe/none。`review` 消费 Playwright 证据:网络失败与页面脚本错误各聚合为高严重度 Issue,console error 记为证据——FocusBoard 的 `/api/tasks` 500 现在通过首页加载的 network failure 被发现,不再需要把 base_url 指到 API。`doctor` 增加 playwright 检查;新增 `specprobe setup-browser`。协议层纯 Rust 单测覆盖(序列化/事件聚合/探测),真实浏览器执行放最后真机验收。
 - 实现:新建 `executors/playwright-runner/`(独立 npm 包:`runner.mjs` + playwright 依赖)。
 - 协议:Rust 经 stdin 发 JSON 动作计划;runner 逐动作执行,stdout 每行一个 JSON 事件(动作结果 / console 消息 / 网络失败 / 截图路径);协议带版本号。
 - Rust 端实现 `TestExecutor` trait(spawn + 双向流)。
 - 动作集(首版 9 个):`goto / click / fill / press / wait_for_selector / expect_text / expect_visible / screenshot / eval`。
 - 证据落盘 `.specprobe/runs/<run-id>/`:截图 PNG、console.json、network.json、trace.zip。
 - `doctor` 增加 Playwright 检查;新增 `specprobe setup-browser` 一键执行 `npx playwright install chromium`。
+- 未来增强(未做):Playwright trace.zip 归档、多页面导航、`TestExecutor` trait 抽象(当前直接函数,待第二个执行器出现时再抽象)。
 
 ### 1.5 测试计划生成真实化(3~4 天)
 

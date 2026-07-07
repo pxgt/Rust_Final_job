@@ -1,3 +1,5 @@
 /target
 .env
 .specprobe/
+node_modules/
+executors/playwright-runner/package-lock.json

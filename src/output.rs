@@ -277,6 +277,7 @@ pub fn print_browser_report(report: &BrowserRunReport, json: bool) -> Result<()>
     println!("----------------------");
     println!("Requirements: {}", report.requirement_source);
     println!("Base URL: {}", report.base_url);
+    println!("Backend: {}", report.backend);
     println!(
         "Execution: attempted={}, dry-run={}, success={}, duration={} ms, timeout={} s",
         yes_no(report.execution.attempted),
@@ -310,6 +311,46 @@ pub fn print_browser_report(report: &BrowserRunReport, json: bool) -> Result<()>
         println!("Response bytes: {}", page.response_bytes);
         if !page.body_excerpt.is_empty() {
             println!("Body excerpt: {}", page.body_excerpt);
+        }
+    }
+
+    if let Some(evidence) = &report.playwright {
+        let outcome = &evidence.outcome;
+        println!("\nPlaywright evidence (archived in {})", evidence.run_dir);
+        if let Some(snapshot) = &outcome.snapshot {
+            if let Some(title) = &snapshot.title {
+                println!("Page title: {title}");
+            }
+            println!("Interactive elements: {}", snapshot.interactive.len());
+        }
+        println!(
+            "Actions: {} ({} failed)",
+            outcome.actions.len(),
+            outcome.actions.iter().filter(|action| !action.ok).count()
+        );
+        for action in &outcome.actions {
+            if let Some(path) = &action.screenshot_path {
+                println!("  screenshot: {path}");
+            }
+        }
+        if !outcome.console.is_empty() {
+            println!("Console messages: {}", outcome.console.len());
+            for message in outcome.console.iter().take(10) {
+                println!("  [{}] {}", message.level, message.text);
+            }
+        }
+        if !outcome.network_failures.is_empty() {
+            println!("Network failures: {}", outcome.network_failures.len());
+            for failure in outcome.network_failures.iter().take(10) {
+                let status = failure
+                    .status
+                    .map(|code| format!(" HTTP {code}"))
+                    .unwrap_or_default();
+                println!("  {}{status}", failure.url);
+            }
+        }
+        for error in &outcome.page_errors {
+            println!("Page error: {error}");
         }
     }
 

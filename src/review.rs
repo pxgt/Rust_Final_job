@@ -566,6 +566,7 @@ fn collect_browser_evidence(
                 });
             }
 
+            collect_playwright_evidence(builder, &report);
             Some(report)
         }
         Err(error) => {
@@ -590,6 +591,118 @@ fn collect_browser_evidence(
             });
             None
         }
+    }
+}
+
+/// 把 Playwright 深度执行证据(DOM 摘要、网络失败、页面脚本错误、console 错误)
+/// 转化为证据项与问题。网络失败与页面错误各聚合为一个高严重度 Issue。
+fn collect_playwright_evidence(builder: &mut ReviewBuilder, report: &BrowserRunReport) {
+    let Some(evidence) = &report.playwright else {
+        return;
+    };
+    let outcome = &evidence.outcome;
+
+    if let Some(snapshot) = &outcome.snapshot {
+        builder.add_evidence(
+            ReviewEvidenceKind::PageProbe,
+            EvidenceStatus::Info,
+            &report.base_url,
+            None,
+            format!(
+                "Playwright captured page '{}' with {} interactive element(s).",
+                snapshot.title.as_deref().unwrap_or("(no title)"),
+                snapshot.interactive.len()
+            ),
+            format!("Evidence archived in {}.", evidence.run_dir),
+        );
+    }
+
+    if !outcome.network_failures.is_empty() {
+        let detail = outcome
+            .network_failures
+            .iter()
+            .take(10)
+            .map(|failure| {
+                let status = failure
+                    .status
+                    .map(|code| format!(" (HTTP {code})"))
+                    .unwrap_or_default();
+                format!("{}{status}", failure.url)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let evidence_id = builder.add_evidence(
+            ReviewEvidenceKind::BrowserDiagnostic,
+            EvidenceStatus::Fail,
+            &report.base_url,
+            None,
+            format!(
+                "Browser observed {} network failure(s) during execution.",
+                outcome.network_failures.len()
+            ),
+            detail.clone(),
+        );
+        builder.add_issue(IssueDraft {
+            severity: IssueSeverity::High,
+            category: IssueCategory::BrowserFailure,
+            title: "页面运行时出现网络请求失败".to_owned(),
+            related_requirement: None,
+            expected: "页面加载与交互过程中的关键请求应返回成功状态。".to_owned(),
+            actual: detail,
+            evidence_ids: vec![evidence_id],
+            recommendation: "检查失败请求对应的后端接口或资源路径，优先修复 4xx/5xx 响应。"
+                .to_owned(),
+        });
+    }
+
+    if !outcome.page_errors.is_empty() {
+        let detail = outcome.page_errors.join("; ");
+        let evidence_id = builder.add_evidence(
+            ReviewEvidenceKind::BrowserDiagnostic,
+            EvidenceStatus::Fail,
+            "browser",
+            None,
+            format!(
+                "Browser reported {} page script error(s).",
+                outcome.page_errors.len()
+            ),
+            detail.clone(),
+        );
+        builder.add_issue(IssueDraft {
+            severity: IssueSeverity::High,
+            category: IssueCategory::BrowserFailure,
+            title: "页面运行时抛出脚本错误".to_owned(),
+            related_requirement: None,
+            expected: "页面在加载和交互过程中不应抛出未处理的 JavaScript 错误。".to_owned(),
+            actual: detail,
+            evidence_ids: vec![evidence_id],
+            recommendation: "根据错误堆栈定位前端脚本缺陷并修复。".to_owned(),
+        });
+    }
+
+    let console_errors: Vec<&str> = outcome
+        .console
+        .iter()
+        .filter(|message| message.level == "error")
+        .map(|message| message.text.as_str())
+        .collect();
+    if !console_errors.is_empty() {
+        builder.add_evidence(
+            ReviewEvidenceKind::BrowserDiagnostic,
+            EvidenceStatus::Warning,
+            "console",
+            None,
+            format!(
+                "Browser console reported {} error message(s).",
+                console_errors.len()
+            ),
+            console_errors
+                .iter()
+                .take(10)
+                .copied()
+                .collect::<Vec<_>>()
+                .join("; "),
+        );
     }
 }
 
