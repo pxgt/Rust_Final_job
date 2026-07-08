@@ -354,6 +354,29 @@ pub fn print_browser_report(report: &BrowserRunReport, json: bool) -> Result<()>
         }
     }
 
+    if !report.scenarios.is_empty() {
+        println!("\nInteraction scenarios");
+        for scenario in &report.scenarios {
+            println!(
+                "- {} [{}] {}",
+                scenario.requirement_id,
+                if scenario.success { "PASS" } else { "FAIL" },
+                scenario.title
+            );
+            for step in &scenario.steps {
+                println!(
+                    "  - {} {} -> {}",
+                    step.action,
+                    step.target,
+                    if step.ok { "ok" } else { "FAIL" }
+                );
+            }
+            if let Some(screenshot) = &scenario.screenshot {
+                println!("  screenshot: {screenshot}");
+            }
+        }
+    }
+
     if !report.plan.cases.is_empty() {
         println!("\nAction plan");
         for case in &report.plan.cases {

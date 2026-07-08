@@ -21,9 +21,10 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 ## 当前边界(如实声明)
 
-以下能力**尚未实现**,是路线图 Phase 1 的核心工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
+以下能力**尚未实现**,是路线图 Phase 1 的收尾工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
 
-- 需求到浏览器的具体交互步骤:当前浏览器执行器打开页面并深度取证(截图、console、网络、DOM 元素摘要),但把需求映射为具体的点击/输入/断言步骤(基于采集的 DOM 摘要)属于 Phase 1.5。
+- 服务器生命周期编排(Phase 1.6):`launch` 目前以"进程退出"为终点,`review --execute` 尚未做"启动服务→等就绪→跑浏览器→优雅关停"的完整编排;进程树 kill 仍有孤儿进程隐患。
+- 缺陷诊断真实化(Phase 1.7):把运行证据 + 源码片段交给 LLM 输出带源码定位的结构化 Issue。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
 
@@ -77,6 +78,8 @@ $env:OLLAMA_MODEL = "qwen2.5:7b"          # OLLAMA_BASE_URL 默认 http://127.0.
 ```
 
 装好后 `browser`/`review --execute`/`propose --execute` 自动走 Playwright:打开页面、截图、采集 console 错误与网络失败、抓取可交互元素摘要,证据归档到 `.specprobe/runs/`。**未安装时自动降级为 HTTP 探测**,CI 与无 Node 环境不受影响;报告的 `backend` 字段标注实际使用的后端。
+
+加 `--provider openai-compatible`(或 `ollama`)时启用**具体交互场景**:SpecProbe 先探针采集页面可交互元素,连同需求交给 LLM 生成带真实 selector 的动作步骤(如"在 `#task-input` 输入空串、点击 `#add-task-btn`、断言列表数量不变"),校验 selector 后逐场景执行;失败的场景在 `review` 中生成关联需求的高严重度 Issue。默认 `mock` 只做通用采集,不调 LLM。
 
 ## 文档索引
 

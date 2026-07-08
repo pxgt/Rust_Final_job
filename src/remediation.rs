@@ -15,10 +15,12 @@ pub enum RemediationError {
     Review(#[from] ReviewError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RemediationOptions {
     pub project_path: PathBuf,
     pub base_url: String,
+    pub provider: crate::ai::AiProviderKind,
+    pub cache_dir: Option<PathBuf>,
     pub execute: bool,
     pub skip_launch: bool,
     pub skip_browser: bool,
@@ -139,6 +141,8 @@ pub async fn generate_remediation_report(
         ReviewOptions {
             project_path: options.project_path,
             base_url: options.base_url,
+            provider: options.provider,
+            cache_dir: options.cache_dir,
             execute: options.execute,
             skip_launch: options.skip_launch,
             skip_browser: options.skip_browser,
@@ -487,6 +491,8 @@ mod tests {
             RemediationOptions {
                 project_path: root.clone(),
                 base_url: "http://127.0.0.1:3000".to_owned(),
+                provider: Default::default(),
+                cache_dir: None,
                 execute: false,
                 skip_launch: true,
                 skip_browser: true,
@@ -522,6 +528,8 @@ mod tests {
             RemediationOptions {
                 project_path: root.clone(),
                 base_url: "http://127.0.0.1:3000".to_owned(),
+                provider: Default::default(),
+                cache_dir: None,
                 execute: false,
                 skip_launch: true,
                 skip_browser: true,

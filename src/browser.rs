@@ -6,17 +6,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::ai::AiProviderKind;
 use crate::playwright::{
-    BrowserPlanRequest, PROTOCOL_VERSION, PlaywrightAction, PlaywrightOutcome, RunnerLocation,
-    detect_runner, run_actions,
+    BrowserPlanRequest, PROTOCOL_VERSION, PageSnapshot, PlaywrightAction, PlaywrightOutcome,
+    RunnerLocation, detect_runner, run_actions,
 };
 use crate::requirements::{
     ExecutorHint, RequirementError, RequirementReport, TestAction, analyze_requirements,
 };
+use crate::scenario::{Scenario, generate_scenarios};
 
 const BODY_EXCERPT_LIMIT: usize = 2_000;
 /// Playwright 总执行超时在每动作超时基础上的额外缓冲(秒)。
 const PLAYWRIGHT_OVERHEAD_SECS: u64 = 10;
+
+/// 浏览器执行选项:选择 AI Provider(非 Mock 时生成具体交互场景)与缓存目录。
+#[derive(Debug, Clone, Default)]
+pub struct BrowserOptions {
+    pub provider: AiProviderKind,
+    pub cache_dir: Option<PathBuf>,
+}
 
 #[derive(Debug, Error)]
 pub enum BrowserError {
@@ -43,6 +52,8 @@ pub struct BrowserRunReport {
     pub execution: BrowserExecution,
     pub page: Option<PageProbeEvidence>,
     pub playwright: Option<PlaywrightEvidence>,
+    /// LLM 生成并执行的具体交互场景结果(仅在启用 AI Provider 且有 sidecar 时非空)。
+    pub scenarios: Vec<ScenarioResult>,
     pub diagnostics: Vec<BrowserDiagnostic>,
 }
 
@@ -60,6 +71,25 @@ pub enum BrowserBackend {
 pub struct PlaywrightEvidence {
     pub run_dir: String,
     pub outcome: PlaywrightOutcome,
+}
+
+/// 一个需求场景的执行结果。
+#[derive(Debug, Serialize)]
+pub struct ScenarioResult {
+    pub requirement_id: String,
+    pub title: String,
+    pub expected_observation: String,
+    pub success: bool,
+    pub screenshot: Option<String>,
+    pub steps: Vec<ScenarioStepReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScenarioStepReport {
+    pub action: String,
+    pub target: String,
+    pub ok: bool,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +163,7 @@ pub async fn run_browser_plan(
     base_url: &str,
     timeout_secs: u64,
     dry_run: bool,
+    options: BrowserOptions,
 ) -> Result<BrowserRunReport, BrowserError> {
     let requirement_report = analyze_requirements(requirements_path)?;
     let plan = build_browser_action_plan(&requirement_report, base_url);
@@ -167,12 +198,20 @@ pub async fn run_browser_plan(
             },
             page: None,
             playwright: None,
+            scenarios: Vec::new(),
             diagnostics,
         });
     }
 
     let start = Instant::now();
-    let outcome = execute_plan(base_url, timeout_secs, &mut diagnostics).await;
+    let outcome = execute_plan(
+        base_url,
+        timeout_secs,
+        &requirement_report,
+        &options,
+        &mut diagnostics,
+    )
+    .await;
     let duration_ms = start.elapsed().as_millis();
 
     Ok(BrowserRunReport {
@@ -189,6 +228,7 @@ pub async fn run_browser_plan(
         },
         page: outcome.page,
         playwright: outcome.playwright,
+        scenarios: outcome.scenarios,
         diagnostics,
     })
 }
@@ -198,17 +238,47 @@ struct ExecutionOutcome {
     success: bool,
     page: Option<PageProbeEvidence>,
     playwright: Option<PlaywrightEvidence>,
+    scenarios: Vec<ScenarioResult>,
 }
 
-/// 优先用 Playwright sidecar 深度执行;探测不到或执行失败则降级到 HTTP 探测。
+/// 优先用 Playwright sidecar:先探针采集 DOM 摘要,若启用了 AI Provider 则据此
+/// 生成并执行具体交互场景;否则保留探针结果。探测不到 sidecar 或失败则降级 HTTP。
 async fn execute_plan(
     base_url: &str,
     timeout_secs: u64,
+    report: &RequirementReport,
+    options: &BrowserOptions,
     diagnostics: &mut Vec<BrowserDiagnostic>,
 ) -> ExecutionOutcome {
     if let Some(location) = detect_runner() {
-        match run_playwright(&location, base_url, timeout_secs).await {
-            Ok(evidence) => return finish_playwright(evidence, diagnostics),
+        let probe = run_in_dir(
+            &location,
+            base_url,
+            probe_actions(base_url),
+            timeout_secs,
+            "probe",
+        )
+        .await;
+        match probe {
+            Ok(evidence) => {
+                if !matches!(options.provider, AiProviderKind::Mock)
+                    && let Some(snapshot) = &evidence.outcome.snapshot
+                    && !snapshot.interactive.is_empty()
+                    && let Some(outcome) = enhance_with_scenarios(
+                        &location,
+                        base_url,
+                        timeout_secs,
+                        report,
+                        snapshot,
+                        options,
+                        diagnostics,
+                    )
+                    .await
+                {
+                    return outcome;
+                }
+                return finish_playwright(evidence, Vec::new(), diagnostics);
+            }
             Err(error) => diagnostics.push(BrowserDiagnostic {
                 severity: BrowserDiagnosticSeverity::Warning,
                 message: format!("Playwright runner failed ({error}); falling back to HTTP probe."),
@@ -224,8 +294,154 @@ async fn execute_plan(
     http_fallback(base_url, timeout_secs, diagnostics).await
 }
 
+/// 通用探针动作:打开页面、等待就绪、截图,附带自动采集的 console/网络/DOM 摘要。
+fn probe_actions(base_url: &str) -> Vec<PlaywrightAction> {
+    vec![
+        PlaywrightAction::Goto {
+            url: base_url.to_owned(),
+        },
+        PlaywrightAction::WaitForSelector {
+            selector: "body".to_owned(),
+        },
+        PlaywrightAction::Screenshot {
+            name: "page".to_owned(),
+        },
+    ]
+}
+
+/// 基于 DOM 摘要用 LLM 生成场景并执行。生成为空或执行失败返回 None(退回探针结果)。
+async fn enhance_with_scenarios(
+    location: &RunnerLocation,
+    base_url: &str,
+    timeout_secs: u64,
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    options: &BrowserOptions,
+    diagnostics: &mut Vec<BrowserDiagnostic>,
+) -> Option<ExecutionOutcome> {
+    let plan = match generate_scenarios(
+        report,
+        snapshot,
+        base_url,
+        options.provider,
+        options.cache_dir.clone(),
+    )
+    .await
+    {
+        Ok(plan) if !plan.scenarios.is_empty() => plan,
+        Ok(_) => return None,
+        Err(error) => {
+            diagnostics.push(BrowserDiagnostic {
+                severity: BrowserDiagnosticSeverity::Warning,
+                message: format!("Scenario generation failed ({error}); keeping probe evidence."),
+            });
+            return None;
+        }
+    };
+    for note in &plan.notes {
+        diagnostics.push(BrowserDiagnostic {
+            severity: BrowserDiagnosticSeverity::Info,
+            message: format!("Scenario note: {note}"),
+        });
+    }
+
+    let (actions, ranges) = build_scenario_actions(&plan.scenarios, base_url);
+    let evidence = match run_in_dir(location, base_url, actions, timeout_secs, "scenario").await {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            diagnostics.push(BrowserDiagnostic {
+                severity: BrowserDiagnosticSeverity::Warning,
+                message: format!("Scenario execution failed ({error}); keeping probe evidence."),
+            });
+            return None;
+        }
+    };
+
+    let scenarios = split_scenario_results(&plan.scenarios, &ranges, &evidence.outcome);
+    let mut outcome = finish_playwright(evidence, scenarios, diagnostics);
+    // 场景整体成功 = sidecar 无 fatal 且每个场景所有步骤通过。
+    outcome.success = outcome.success && outcome.scenarios.iter().all(|scenario| scenario.success);
+    Some(outcome)
+}
+
+/// 把场景合并为一个动作序列(每场景前 goto+等待以隔离状态,结尾截图),
+/// 返回动作列表与每个场景在其中的 [start, end) 区间。
+fn build_scenario_actions(
+    scenarios: &[Scenario],
+    base_url: &str,
+) -> (Vec<PlaywrightAction>, Vec<(usize, usize)>) {
+    let mut actions = Vec::new();
+    let mut ranges = Vec::new();
+    for scenario in scenarios {
+        let start = actions.len();
+        actions.push(PlaywrightAction::Goto {
+            url: base_url.to_owned(),
+        });
+        actions.push(PlaywrightAction::WaitForSelector {
+            selector: "body".to_owned(),
+        });
+        actions.extend(scenario.steps.iter().cloned());
+        actions.push(PlaywrightAction::Screenshot {
+            name: format!("scenario-{}", scenario.requirement_id),
+        });
+        ranges.push((start, actions.len()));
+    }
+    (actions, ranges)
+}
+
+/// 按区间把执行结果切回各场景。用户步骤位于每区间的 goto+wait 之后、结尾截图之前。
+fn split_scenario_results(
+    scenarios: &[Scenario],
+    ranges: &[(usize, usize)],
+    outcome: &PlaywrightOutcome,
+) -> Vec<ScenarioResult> {
+    scenarios
+        .iter()
+        .zip(ranges)
+        .map(|(scenario, &(start, end))| {
+            let result_at = |index: usize| outcome.actions.iter().find(|a| a.index == index);
+            let steps = scenario
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(offset, action)| {
+                    let result = result_at(start + 2 + offset);
+                    ScenarioStepReport {
+                        action: action.label().to_owned(),
+                        target: action.target(),
+                        ok: result.map(|r| r.ok).unwrap_or(false),
+                        detail: result.and_then(|r| r.detail.clone()),
+                    }
+                })
+                .collect::<Vec<_>>();
+            // 场景成功:该区间内所有已执行动作都通过。
+            let success = outcome
+                .actions
+                .iter()
+                .filter(|a| a.index >= start && a.index < end)
+                .all(|a| a.ok)
+                && !steps.is_empty();
+            let screenshot = outcome
+                .actions
+                .iter()
+                .filter(|a| a.index >= start && a.index < end)
+                .rev()
+                .find_map(|a| a.screenshot_path.clone());
+            ScenarioResult {
+                requirement_id: scenario.requirement_id.clone(),
+                title: scenario.title.clone(),
+                expected_observation: scenario.expected_observation.clone(),
+                success,
+                screenshot,
+                steps,
+            }
+        })
+        .collect()
+}
+
 fn finish_playwright(
     evidence: PlaywrightEvidence,
+    scenarios: Vec<ScenarioResult>,
     diagnostics: &mut Vec<BrowserDiagnostic>,
 ) -> ExecutionOutcome {
     let success = evidence.outcome.success();
@@ -272,6 +488,7 @@ fn finish_playwright(
         success,
         page: None,
         playwright: Some(evidence),
+        scenarios,
     }
 }
 
@@ -296,6 +513,7 @@ async fn http_fallback(
                 success,
                 page: Some(page),
                 playwright: None,
+                scenarios: Vec::new(),
             }
         }
         Err(error) => {
@@ -308,21 +526,24 @@ async fn http_fallback(
                 success: false,
                 page: None,
                 playwright: None,
+                scenarios: Vec::new(),
             }
         }
     }
 }
 
-/// 用 sidecar 打开页面并深度取证:导航、等待、截图,自动附带 console/网络/DOM 摘要。
-/// 证据归档到 `.specprobe/runs/browser-<id>/`。
-async fn run_playwright(
+/// 用 sidecar 执行一组动作并深度取证:自动附带 console/网络/DOM 摘要。
+/// 证据归档到 `.specprobe/runs/<prefix>-<id>/`。
+async fn run_in_dir(
     location: &RunnerLocation,
     base_url: &str,
+    actions: Vec<PlaywrightAction>,
     timeout_secs: u64,
+    prefix: &str,
 ) -> Result<PlaywrightEvidence, crate::playwright::PlaywrightError> {
     let run_dir = PathBuf::from(".specprobe")
         .join("runs")
-        .join(format!("browser-{}", unique_suffix()));
+        .join(format!("{prefix}-{}", unique_suffix()));
     let _ = fs::create_dir_all(&run_dir);
     let screenshot_dir = fs::canonicalize(&run_dir).unwrap_or_else(|_| run_dir.clone());
 
@@ -331,17 +552,7 @@ async fn run_playwright(
         base_url: base_url.to_owned(),
         timeout_ms: timeout_secs.saturating_mul(1000).max(1000),
         screenshot_dir: normalize_path(&screenshot_dir),
-        actions: vec![
-            PlaywrightAction::Goto {
-                url: base_url.to_owned(),
-            },
-            PlaywrightAction::WaitForSelector {
-                selector: "body".to_owned(),
-            },
-            PlaywrightAction::Screenshot {
-                name: "page".to_owned(),
-            },
-        ],
+        actions,
     };
 
     let overall = Duration::from_secs(timeout_secs.max(1).saturating_add(PLAYWRIGHT_OVERHEAD_SECS));
@@ -568,7 +779,7 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{extract_title, is_supported_probe_url, run_browser_plan};
+    use super::{BrowserOptions, extract_title, is_supported_probe_url, run_browser_plan};
 
     #[tokio::test]
     async fn browser_dry_run_builds_action_plan() {
@@ -576,9 +787,15 @@ mod tests {
         let file = root.join("PRD.md");
         fs::write(&file, "- 页面应该显示登录成功提示。").expect("write requirement");
 
-        let report = run_browser_plan(&file, "http://127.0.0.1:3000", 2, true)
-            .await
-            .expect("dry run succeeds");
+        let report = run_browser_plan(
+            &file,
+            "http://127.0.0.1:3000",
+            2,
+            true,
+            BrowserOptions::default(),
+        )
+        .await
+        .expect("dry run succeeds");
 
         assert!(!report.execution.attempted);
         assert!(report.execution.success);
@@ -608,9 +825,15 @@ mod tests {
                 .expect("write response");
         });
 
-        let report = run_browser_plan(&file, &format!("http://127.0.0.1:{port}/"), 3, false)
-            .await
-            .expect("browser probe succeeds");
+        let report = run_browser_plan(
+            &file,
+            &format!("http://127.0.0.1:{port}/"),
+            3,
+            false,
+            BrowserOptions::default(),
+        )
+        .await
+        .expect("browser probe succeeds");
 
         handle.join().expect("server thread joins");
         assert!(report.execution.success);

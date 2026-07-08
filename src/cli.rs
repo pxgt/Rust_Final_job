@@ -87,6 +87,12 @@ pub enum Command {
         /// Base URL for the web application under test.
         #[arg(long, default_value = "http://127.0.0.1:3000")]
         base_url: String,
+        /// AI provider for generating concrete interaction steps (needs Playwright). Mock probes only.
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
         /// Maximum page probe time.
         #[arg(long, default_value_t = 10)]
         timeout_secs: u64,
@@ -108,6 +114,12 @@ pub enum Command {
         /// Base URL for browser evidence.
         #[arg(long, default_value = "http://127.0.0.1:3000")]
         base_url: String,
+        /// AI provider for requirement refinement and browser scenarios. Mock stays offline.
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
         /// Execute launch and browser probes. Without this, review stays plan-only.
         #[arg(long)]
         execute: bool,
@@ -138,6 +150,12 @@ pub enum Command {
         /// Base URL for browser evidence.
         #[arg(long, default_value = "http://127.0.0.1:3000")]
         base_url: String,
+        /// AI provider for requirement refinement and browser scenarios. Mock stays offline.
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
         /// Execute launch and browser probes before generating proposals.
         #[arg(long)]
         execute: bool,

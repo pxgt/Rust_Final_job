@@ -98,12 +98,13 @@
 - `doctor` 增加 Playwright 检查;新增 `specprobe setup-browser` 一键执行 `npx playwright install chromium`。
 - 未来增强(未做):Playwright trace.zip 归档、多页面导航、`TestExecutor` trait 抽象(当前直接函数,待第二个执行器出现时再抽象)。
 
-### 1.5 测试计划生成真实化(3~4 天)
+### 1.5 测试计划生成真实化(3~4 天)——已完成(2026-07-08)
 
 - 先让执行器打开首页,抓取可交互元素摘要(accessibility tree:可见按钮、输入框、链接)。
 - 元素摘要 + 需求一起喂给 LLM,生成带真实 selector 的具体步骤。
 - 生成后 dry-run 校验 selector 存在;不存在的回喂 LLM 修正(≤2 轮)。
 - 产出形如"在 `#task-input` 输入空字符串并点击 `#add-task-btn`,断言列表数量不变",而不是"执行核心操作"。
+- 实施记录:新增 `src/scenario.rs`,复用 1.2 的 `run_chat_json` 传输层。流程:browser 探针采集 DOM 摘要 → `generate_scenarios`(需求 + 元素摘要 → 每需求一个动作序列)→ **静态 selector 校验即"dry-run 校验"**:操作类动作(click/fill/press)的 selector 必须来自页面元素列表,不通过则通过 `run_chat_json` 的反馈重问回路自动修正(≤2 轮),断言/等待类允许任意 CSS selector。执行:每场景前 goto+等待隔离状态、结尾截图,一次 sidecar run 执行所有场景,按 index 区间切回各场景结果。report 新增 `scenarios` 字段;review 消费:失败场景关联需求生成高严重度 Issue。启用条件:有 sidecar + `--provider` 非 Mock;默认 Mock 走 1.4 通用采集。`browser`/`review`/`propose` 均加 `--provider`/`--no-cache`,review 的需求也改走 1.3 精解析。真实浏览器端到端(含 selector 修正回路的真机表现)放最后真机验收。
 
 ### 1.6 服务器生命周期编排(3~4 天)
 

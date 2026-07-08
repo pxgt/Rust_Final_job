@@ -4,10 +4,14 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::browser::{BrowserDiagnosticSeverity, BrowserRunReport, run_browser_plan};
+use crate::ai::{AiError, AiProviderKind};
+use crate::browser::{
+    BrowserDiagnosticSeverity, BrowserOptions, BrowserRunReport, run_browser_plan,
+};
+use crate::refine::{RefineOptions, analyze_requirements_with_refinement};
 use crate::requirements::{
     DiagnosticSeverity, QualityFlagKind, Requirement, RequirementError, RequirementQualityFlag,
-    RequirementReport, analyze_requirements,
+    RequirementReport,
 };
 use crate::runtime::{LaunchReport, RuntimeDiagnosticSeverity, RuntimeError, launch_project};
 
@@ -15,12 +19,16 @@ use crate::runtime::{LaunchReport, RuntimeDiagnosticSeverity, RuntimeError, laun
 pub enum ReviewError {
     #[error(transparent)]
     Requirements(#[from] RequirementError),
+    #[error(transparent)]
+    Ai(#[from] AiError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ReviewOptions {
     pub project_path: PathBuf,
     pub base_url: String,
+    pub provider: AiProviderKind,
+    pub cache_dir: Option<PathBuf>,
     pub execute: bool,
     pub skip_launch: bool,
     pub skip_browser: bool,
@@ -210,7 +218,14 @@ pub async fn generate_review_report(
     requirements_path: &Path,
     options: ReviewOptions,
 ) -> Result<ReviewReport, ReviewError> {
-    let requirement_report = analyze_requirements(requirements_path)?;
+    let requirement_report = analyze_requirements_with_refinement(
+        requirements_path,
+        RefineOptions {
+            provider: options.provider,
+            cache_dir: options.cache_dir.clone(),
+        },
+    )
+    .await?;
     let config = ReviewRunConfig {
         requirements_source: requirement_report.source.clone(),
         project_root: display_path(&options.project_path),
@@ -261,6 +276,10 @@ pub async fn generate_review_report(
             &options.base_url,
             options.browser_timeout_secs,
             !options.execute,
+            BrowserOptions {
+                provider: options.provider,
+                cache_dir: options.cache_dir.clone(),
+            },
         )
         .await;
         collect_browser_evidence(&mut builder, browser)
@@ -567,6 +586,7 @@ fn collect_browser_evidence(
             }
 
             collect_playwright_evidence(builder, &report);
+            collect_scenario_evidence(builder, &report);
             Some(report)
         }
         Err(error) => {
@@ -703,6 +723,74 @@ fn collect_playwright_evidence(builder: &mut ReviewBuilder, report: &BrowserRunR
                 .collect::<Vec<_>>()
                 .join("; "),
         );
+    }
+}
+
+/// 把 LLM 生成并执行的浏览器场景结果转化为证据与问题:每个失败场景(有步骤未通过)
+/// 关联对应需求生成一个高严重度 Issue,成功场景记为通过证据。
+fn collect_scenario_evidence(builder: &mut ReviewBuilder, report: &BrowserRunReport) {
+    for scenario in &report.scenarios {
+        let failed: Vec<&crate::browser::ScenarioStepReport> =
+            scenario.steps.iter().filter(|step| !step.ok).collect();
+        let status = if scenario.success {
+            EvidenceStatus::Pass
+        } else {
+            EvidenceStatus::Fail
+        };
+        let detail = scenario
+            .steps
+            .iter()
+            .map(|step| {
+                format!(
+                    "{} {} -> {}",
+                    step.action,
+                    step.target,
+                    if step.ok { "ok" } else { "FAIL" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let evidence_id = builder.add_evidence(
+            ReviewEvidenceKind::PageProbe,
+            status,
+            &report.base_url,
+            Some(scenario.requirement_id.clone()),
+            format!(
+                "Browser scenario '{}' {}.",
+                scenario.title,
+                if scenario.success { "passed" } else { "failed" }
+            ),
+            detail,
+        );
+
+        if !scenario.success {
+            let failed_detail = failed
+                .iter()
+                .map(|step| {
+                    format!(
+                        "{} {}: {}",
+                        step.action,
+                        step.target,
+                        step.detail.as_deref().unwrap_or("assertion failed")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            builder.add_issue(IssueDraft {
+                severity: IssueSeverity::High,
+                category: IssueCategory::BrowserFailure,
+                title: format!("交互场景未通过：{}", scenario.title),
+                related_requirement: Some(scenario.requirement_id.clone()),
+                expected: if scenario.expected_observation.is_empty() {
+                    "页面交互后应产生与需求一致的可观察结果。".to_owned()
+                } else {
+                    scenario.expected_observation.clone()
+                },
+                actual: failed_detail,
+                evidence_ids: vec![evidence_id],
+                recommendation: "根据失败的操作或断言定位前端逻辑缺陷并修复。".to_owned(),
+            });
+        }
     }
 }
 
@@ -893,6 +981,8 @@ mod tests {
             ReviewOptions {
                 project_path: root.clone(),
                 base_url: "http://127.0.0.1:3000".to_owned(),
+                provider: Default::default(),
+                cache_dir: None,
                 execute: false,
                 skip_launch: true,
                 skip_browser: true,
@@ -923,6 +1013,8 @@ mod tests {
             ReviewOptions {
                 project_path: root.clone(),
                 base_url: "http://127.0.0.1:9".to_owned(),
+                provider: Default::default(),
+                cache_dir: None,
                 execute: true,
                 skip_launch: true,
                 skip_browser: false,

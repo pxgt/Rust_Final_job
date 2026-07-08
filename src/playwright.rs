@@ -62,6 +62,37 @@ pub enum PlaywrightAction {
     Eval { expression: String },
 }
 
+impl PlaywrightAction {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Goto { .. } => "goto",
+            Self::WaitForSelector { .. } => "wait_for_selector",
+            Self::Click { .. } => "click",
+            Self::Fill { .. } => "fill",
+            Self::Press { .. } => "press",
+            Self::ExpectVisible { .. } => "expect_visible",
+            Self::ExpectText { .. } => "expect_text",
+            Self::Screenshot { .. } => "screenshot",
+            Self::Eval { .. } => "eval",
+        }
+    }
+
+    /// 动作的主要目标(selector / url / 名称),用于人类可读报告。
+    pub fn target(&self) -> String {
+        match self {
+            Self::Goto { url } => url.clone(),
+            Self::Screenshot { name } => name.clone(),
+            Self::Eval { expression } => expression.clone(),
+            Self::WaitForSelector { selector }
+            | Self::Click { selector }
+            | Self::ExpectVisible { selector }
+            | Self::Fill { selector, .. }
+            | Self::Press { selector, .. }
+            | Self::ExpectText { selector, .. } => selector.clone(),
+        }
+    }
+}
+
 /// sidecar 上报的事件(NDJSON,每行一个)。未知类型被忽略以便协议向前兼容。
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

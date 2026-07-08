@@ -10,6 +10,7 @@ pub mod requirements;
 pub mod review;
 pub mod runtime;
 pub mod scanner;
+pub mod scenario;
 #[cfg(test)]
 pub(crate) mod testutil;
 
@@ -90,17 +91,31 @@ pub async fn run() -> Result<()> {
         Command::Browser {
             path,
             base_url,
+            provider,
+            no_cache,
             timeout_secs,
             dry_run,
             json,
         } => {
-            let report = browser::run_browser_plan(&path, &base_url, timeout_secs, dry_run).await?;
+            let report = browser::run_browser_plan(
+                &path,
+                &base_url,
+                timeout_secs,
+                dry_run,
+                browser::BrowserOptions {
+                    provider,
+                    cache_dir: cache_dir_unless(no_cache),
+                },
+            )
+            .await?;
             output::print_browser_report(&report, json)?;
         }
         Command::Review {
             path,
             project,
             base_url,
+            provider,
+            no_cache,
             execute,
             skip_launch,
             skip_browser,
@@ -113,6 +128,8 @@ pub async fn run() -> Result<()> {
                 review::ReviewOptions {
                     project_path: project,
                     base_url,
+                    provider,
+                    cache_dir: cache_dir_unless(no_cache),
                     execute,
                     skip_launch,
                     skip_browser,
@@ -127,6 +144,8 @@ pub async fn run() -> Result<()> {
             path,
             project,
             base_url,
+            provider,
+            no_cache,
             execute,
             skip_launch,
             skip_browser,
@@ -139,6 +158,8 @@ pub async fn run() -> Result<()> {
                 remediation::RemediationOptions {
                     project_path: project,
                     base_url,
+                    provider,
+                    cache_dir: cache_dir_unless(no_cache),
                     execute,
                     skip_launch,
                     skip_browser,
