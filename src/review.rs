@@ -8,6 +8,7 @@ use crate::ai::{AiError, AiProviderKind};
 use crate::browser::{
     BrowserDiagnosticSeverity, BrowserOptions, BrowserRunReport, run_browser_plan,
 };
+use crate::diagnosis::{Diagnosis, FailedFinding, generate_diagnoses};
 use crate::refine::{RefineOptions, analyze_requirements_with_refinement};
 use crate::requirements::{
     DiagnosticSeverity, QualityFlagKind, Requirement, RequirementError, RequirementQualityFlag,
@@ -47,6 +48,8 @@ pub struct ReviewReport {
     pub browser_report: Option<BrowserRunReport>,
     pub evidence: Vec<EvidenceItem>,
     pub issues: Vec<Issue>,
+    /// LLM 深度诊断(带源码定位),仅在启用 AI Provider 且有可诊断的失败时非空。
+    pub diagnoses: Vec<Diagnosis>,
 }
 
 #[derive(Debug, Serialize)]
@@ -297,6 +300,45 @@ pub async fn generate_review_report(
         (launch_report, browser_report)
     };
 
+    // LLM 深度诊断:对运行期失败(启动/浏览器)叠加带源码定位的根因分析。
+    // findings 先 owned 收集,避免与后续 &mut builder 借用冲突。
+    let findings: Vec<FailedFinding> = builder
+        .issues
+        .iter()
+        .filter(|issue| is_diagnosable(issue))
+        .map(|issue| FailedFinding {
+            issue_id: issue.id.clone(),
+            title: issue.title.clone(),
+            expected: issue.expected.clone(),
+            actual: issue.actual.clone(),
+        })
+        .collect();
+    let diagnoses = if matches!(options.provider, AiProviderKind::Mock) || findings.is_empty() {
+        Vec::new()
+    } else {
+        match generate_diagnoses(
+            &findings,
+            &options.project_path,
+            options.provider,
+            options.cache_dir.clone(),
+        )
+        .await
+        {
+            Ok(diagnoses) => diagnoses,
+            Err(error) => {
+                builder.add_evidence(
+                    ReviewEvidenceKind::ReviewDiagnostic,
+                    EvidenceStatus::Warning,
+                    "diagnosis",
+                    None,
+                    "AI defect diagnosis was skipped.",
+                    error.to_string(),
+                );
+                Vec::new()
+            }
+        }
+    };
+
     let summary = build_summary(
         &requirement_report,
         builder.evidence.len(),
@@ -311,7 +353,20 @@ pub async fn generate_review_report(
         browser_report,
         evidence: builder.evidence,
         issues: builder.issues,
+        diagnoses,
     })
+}
+
+/// 可做源码级诊断的失败:运行期(启动 / 浏览器)的高严重度问题。
+/// 需求文档类问题(RequirementGap 等)不指向代码,不诊断。
+fn is_diagnosable(issue: &Issue) -> bool {
+    matches!(
+        issue.category,
+        IssueCategory::RuntimeFailure | IssueCategory::BrowserFailure
+    ) && matches!(
+        issue.severity,
+        IssueSeverity::High | IssueSeverity::Critical
+    )
 }
 
 /// 用 ManagedApp 编排完整执行:启动被测服务、探测就绪、运行浏览器、优雅关停。

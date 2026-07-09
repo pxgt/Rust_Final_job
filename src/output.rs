@@ -459,6 +459,33 @@ pub fn print_review_report(report: &ReviewReport, json: bool) -> Result<()> {
         }
     }
 
+    if !report.diagnoses.is_empty() {
+        println!("\nAI diagnoses");
+        for diagnosis in &report.diagnoses {
+            println!(
+                "- [{}] {} (issues: {})",
+                diagnosis.confidence,
+                diagnosis.title,
+                if diagnosis.related_issue_ids.is_empty() {
+                    "-".to_owned()
+                } else {
+                    diagnosis.related_issue_ids.join(", ")
+                }
+            );
+            println!("  root cause: {}", diagnosis.root_cause);
+            for location in &diagnosis.source_locations {
+                let line = location
+                    .line
+                    .map(|line| format!(":{line}"))
+                    .unwrap_or_default();
+                println!("  location: {}{line}", location.file);
+            }
+            if !diagnosis.suggested_fix.is_empty() {
+                println!("  suggested fix: {}", diagnosis.suggested_fix);
+            }
+        }
+    }
+
     if !report.evidence.is_empty() {
         println!("\nEvidence");
         for evidence in &report.evidence {

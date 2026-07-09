@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod browser;
 pub mod cli;
+pub mod diagnosis;
 pub mod doctor;
 pub mod output;
 pub mod playwright;

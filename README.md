@@ -15,15 +15,13 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
 - `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划并执行。装了 Playwright runner 时用真实浏览器打开页面,采集截图、console 错误、网络失败和可交互元素摘要,证据归档到 `.specprobe/runs/`;未装时自动降级为 `http`/`https` 页面探测(状态码、标题、正文摘要,支持重定向)。
 - `specprobe setup-browser`:一键安装 Playwright runner(`npm install` + `npx playwright install chromium`,需要 Node.js)。
-- `specprobe review <PATH>`:汇总需求质量、项目启动和浏览器证据,生成带审批状态的问题清单。`--execute` 时用托管生命周期编排:自动启动被测服务→探测就绪→运行浏览器→优雅关停(进程树 kill)。
+- `specprobe review <PATH>`:汇总需求质量、项目启动和浏览器证据,生成带审批状态的问题清单。`--execute` 时用托管生命周期编排:自动启动被测服务→探测就绪→运行浏览器→优雅关停(进程树 kill);`--provider` 非 Mock 时对运行期失败叠加带源码定位与置信度的 LLM 深度诊断。
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 
 ## 当前边界(如实声明)
 
-以下能力**尚未实现**,是路线图 Phase 1 的收尾工作,详见 [docs/ROADMAP.md](docs/ROADMAP.md):
-
-- 缺陷诊断真实化(Phase 1.7):当前 Issue 由确定性规则从证据生成;把运行证据 + 相关源码片段交给 LLM 输出带源码定位与置信度的结构化 Issue 尚未做。
+Phase 1（真实化)已全部完成,代码 + 单测 + 双平台 CI 就绪。**剩余为端到端真机验收**:用真实模型(DeepSeek 等)+ 安装 chromium,对 FocusBoard 实测 `review --execute --provider openai-compatible` 的缺陷检出率(目标 5 个注入缺陷检出 ≥4)。后续 Phase 2（易用性:一键 `check` 命令、配置文件、进度反馈、HTML 报告、审批持久化)、Phase 3（修复闭环)、Phase 4（广度)详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
 

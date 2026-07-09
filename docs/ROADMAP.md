@@ -113,12 +113,13 @@
 - `review --execute` 变为编排器管理的完整流程:起服务 → 等就绪 → 跑浏览器计划 → 收尾。消除"健康服务器被报告为失败"的语义错误。
 - 实施记录:runtime.rs 新增 `ManagedApp`(`start_app` 启动持有进程、`wait_until_ready` 轮询 base_url HTTP 直到响应/进程退出/超时、`shutdown` 杀进程树+采集日志返回 LaunchReport)。进程树 kill 采用 **taskkill /T /F(Windows)+ 进程组负 PID kill(Unix,`build_process` 设 `process_group(0)`)**,未引入 windows crate。`LaunchReport` 新增 `readiness` 字段。`review --execute`(且未 skip launch/browser)走 `run_orchestrated`:起服务→等就绪→跑浏览器→关停,取代原先各自独立的一次性 launch;server 起不来则记录 launch 错误并仍尝试浏览器(用户可能自行启动了服务)。就绪即视为 launch 成功(API 500 等属浏览器层证据),消除健康服务器被判失败的语义错误。日志正则就绪探测未做(仅 HTTP 轮询),够用。真机端到端(自动起 FocusBoard + 浏览器)放最后真机验收。
 
-### 1.7 缺陷诊断真实化(3~4 天)
+### 1.7 缺陷诊断真实化(3~4 天)——已完成(2026-07-08)
 
 - 把(需求 + 验收标准 + 动作执行结果 + 截图 + console 错误 + 网络 5xx + 服务端日志 + 相关源码片段)打包给 LLM,输出 schema 约束的 `Issue`(含源码定位猜想 + 置信度)。
 - 源码片段检索先用启发式:按路由路径、文件名、关键词 grep 找相关文件,截取片段喂给模型。
+- 实施记录:新增 `src/diagnosis.rs`,在确定性规则 Issue 之上**叠加**一层 LLM 深度诊断(规则 Issue 始终保留,离线可用)。流程:从失败 Issue(运行期 RuntimeFailure/BrowserFailure 高严重度)提取关键词(CSS selector、URL 路径段、kebab/snake 标识符)→ 遍历项目源文件 grep 命中行截取带行号片段(跳过 node_modules/target 等,限量 12 片段)→ 失败发现 + 源码片段交 LLM → 输出带 `source_locations`(文件+行+片段)、`confidence`、`suggested_fix` 的诊断。校验:引用的源文件必须来自检索到的片段集合(严格拒绝臆造、宽容丢弃),related_issue_ids 过滤未知。复用 `run_chat_json`。`ReviewReport` 新增 `diagnoses` 字段;仅 `--provider` 非 Mock 且有可诊断失败时触发,失败不阻断 review。5 个单测(标识符提取、源码检索跳过依赖目录、未知文件拒绝+宽容过滤、关键词去重限量、Mock 空)。**Phase 1 全部完成。**
 
-**Phase 1 验收门(用 FocusBoard)**:`review --execute` 自动检出 5 个注入缺陷中至少 4 个(API 500、空输入校验、统计不更新、筛选失效;持久化缺陷需要 reload 场景,列为挑战项),且无高严重度误报。**不达标不进 Phase 2。**
+**Phase 1 验收门(用 FocusBoard)**:`review --execute` 自动检出 5 个注入缺陷中至少 4 个(API 500、空输入校验、统计不更新、筛选失效;持久化缺陷需要 reload 场景,列为挑战项),且无高严重度误报。**验收方式**:全部子阶段的代码 + 单测 + 双平台 CI 已完成;端到端真机验收(DeepSeek key + 装 chromium,`review --execute --provider openai-compatible` 对 FocusBoard 实测检出率)为下一步待办,通过后方进 Phase 2。
 
 ## 5. Phase 2 — 让它好用(2~3 周)
 
