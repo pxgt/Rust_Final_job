@@ -13,7 +13,9 @@ use crate::requirements::{
     DiagnosticSeverity, QualityFlagKind, Requirement, RequirementError, RequirementQualityFlag,
     RequirementReport,
 };
-use crate::runtime::{LaunchReport, RuntimeDiagnosticSeverity, RuntimeError, launch_project};
+use crate::runtime::{
+    LaunchReport, RuntimeDiagnosticSeverity, RuntimeError, launch_project, start_app,
+};
 
 #[derive(Debug, Error)]
 pub enum ReviewError {
@@ -240,49 +242,59 @@ pub async fn generate_review_report(
     let mut builder = ReviewBuilder::new();
     collect_requirement_evidence(&mut builder, &requirement_report);
 
-    let launch_report = if options.skip_launch {
-        builder.add_evidence(
-            ReviewEvidenceKind::ReviewDiagnostic,
-            EvidenceStatus::Skipped,
-            "review",
-            None,
-            "Project launch evidence was skipped.",
-            "Use review without --skip-launch to include launch command detection or execution.",
-        );
-        None
-    } else {
-        let launch = launch_project(
-            &options.project_path,
-            options.launch_timeout_secs,
-            !options.execute,
-        )
-        .await;
-        collect_launch_evidence(&mut builder, launch)
-    };
+    // 完整执行(启动 + 浏览器)时用 ManagedApp 编排:起服务 → 等就绪 → 跑浏览器 → 关停。
+    // 其余组合(计划级、单独跳过某一步)保留原独立路径。
+    let orchestrate = options.execute && !options.skip_launch && !options.skip_browser;
 
-    let browser_report = if options.skip_browser {
-        builder.add_evidence(
-            ReviewEvidenceKind::ReviewDiagnostic,
-            EvidenceStatus::Skipped,
-            "review",
-            None,
-            "Browser evidence was skipped.",
-            "Use review without --skip-browser to include browser action planning or page probing.",
-        );
-        None
+    let (launch_report, browser_report) = if orchestrate {
+        run_orchestrated(&mut builder, requirements_path, &options).await
     } else {
-        let browser = run_browser_plan(
-            requirements_path,
-            &options.base_url,
-            options.browser_timeout_secs,
-            !options.execute,
-            BrowserOptions {
-                provider: options.provider,
-                cache_dir: options.cache_dir.clone(),
-            },
-        )
-        .await;
-        collect_browser_evidence(&mut builder, browser)
+        let launch_report = if options.skip_launch {
+            builder.add_evidence(
+                ReviewEvidenceKind::ReviewDiagnostic,
+                EvidenceStatus::Skipped,
+                "review",
+                None,
+                "Project launch evidence was skipped.",
+                "Use review without --skip-launch to include launch command detection or execution.",
+            );
+            None
+        } else {
+            let launch = launch_project(
+                &options.project_path,
+                options.launch_timeout_secs,
+                !options.execute,
+            )
+            .await;
+            collect_launch_evidence(&mut builder, launch)
+        };
+
+        let browser_report = if options.skip_browser {
+            builder.add_evidence(
+                ReviewEvidenceKind::ReviewDiagnostic,
+                EvidenceStatus::Skipped,
+                "review",
+                None,
+                "Browser evidence was skipped.",
+                "Use review without --skip-browser to include browser action planning or page probing.",
+            );
+            None
+        } else {
+            let browser = run_browser_plan(
+                requirements_path,
+                &options.base_url,
+                options.browser_timeout_secs,
+                !options.execute,
+                BrowserOptions {
+                    provider: options.provider,
+                    cache_dir: options.cache_dir.clone(),
+                },
+            )
+            .await;
+            collect_browser_evidence(&mut builder, browser)
+        };
+
+        (launch_report, browser_report)
     };
 
     let summary = build_summary(
@@ -300,6 +312,50 @@ pub async fn generate_review_report(
         evidence: builder.evidence,
         issues: builder.issues,
     })
+}
+
+/// 用 ManagedApp 编排完整执行:启动被测服务、探测就绪、运行浏览器、优雅关停。
+/// 启动失败时记录 launch 错误并仍尝试浏览器(用户可能已自行启动服务)。
+async fn run_orchestrated(
+    builder: &mut ReviewBuilder,
+    requirements_path: &Path,
+    options: &ReviewOptions,
+) -> (Option<LaunchReport>, Option<BrowserRunReport>) {
+    let browser_options = BrowserOptions {
+        provider: options.provider,
+        cache_dir: options.cache_dir.clone(),
+    };
+    match start_app(&options.project_path).await {
+        Ok(mut app) => {
+            app.wait_until_ready(Some(&options.base_url), options.launch_timeout_secs)
+                .await;
+            let browser = run_browser_plan(
+                requirements_path,
+                &options.base_url,
+                options.browser_timeout_secs,
+                false,
+                browser_options,
+            )
+            .await;
+            let launch_report = app.shutdown().await;
+            let launch = collect_launch_evidence(builder, Ok(launch_report));
+            let browser_report = collect_browser_evidence(builder, browser);
+            (launch, browser_report)
+        }
+        Err(error) => {
+            let launch = collect_launch_evidence(builder, Err(error));
+            let browser = run_browser_plan(
+                requirements_path,
+                &options.base_url,
+                options.browser_timeout_secs,
+                false,
+                browser_options,
+            )
+            .await;
+            let browser_report = collect_browser_evidence(builder, browser);
+            (launch, browser_report)
+        }
+    }
 }
 
 fn collect_requirement_evidence(builder: &mut ReviewBuilder, report: &RequirementReport) {

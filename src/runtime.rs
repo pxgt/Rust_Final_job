@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use thiserror::Error;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 const LOG_EXCERPT_LIMIT: usize = 4_000;
 
@@ -35,9 +35,21 @@ pub struct LaunchReport {
     pub adapter: ProjectAdapterKind,
     pub command: LaunchCommand,
     pub execution: LaunchExecution,
+    /// 托管模式(ManagedApp)下的就绪探测结果;一次性 launch 为 None。
+    pub readiness: Option<ReadinessReport>,
     pub stdout_excerpt: String,
     pub stderr_excerpt: String,
     pub diagnostics: Vec<LaunchDiagnostic>,
+}
+
+/// 被测服务的就绪探测结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadinessReport {
+    /// 是否进行了探测(提供了 base_url 才探测)。
+    pub probed: bool,
+    pub ready: bool,
+    pub waited_ms: u128,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -165,6 +177,7 @@ pub async fn launch_project(
                 duration_ms: 0,
                 timeout_secs,
             },
+            readiness: None,
             stdout_excerpt: String::new(),
             stderr_excerpt: String::new(),
             diagnostics: vec![LaunchDiagnostic {
@@ -204,10 +217,245 @@ pub async fn launch_project(
         adapter: plan.adapter,
         command,
         execution: run.execution,
+        readiness: None,
         stdout_excerpt: run.stdout_excerpt,
         stderr_excerpt: run.stderr_excerpt,
         diagnostics,
     })
+}
+
+const READINESS_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 托管的被测服务:已启动并持有,可探测就绪、保持运行、优雅关停。
+/// 取代"运行到退出或超时杀掉"的模型,用于 Web 服务器这类长驻进程。
+pub struct ManagedApp {
+    child: Child,
+    pid: Option<u32>,
+    log_dir: PathBuf,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
+    project_root: String,
+    adapter: ProjectAdapterKind,
+    command: LaunchCommand,
+    started: Instant,
+    readiness: Option<ReadinessReport>,
+}
+
+/// 启动被测服务并持有进程(不等待退出)。stdout/stderr 落盘,供关停时采集。
+pub async fn start_app(path: &Path) -> Result<ManagedApp, RuntimeError> {
+    if !path.exists() {
+        return Err(RuntimeError::NotFound(path.to_path_buf()));
+    }
+    if !path.is_dir() {
+        return Err(RuntimeError::NotDirectory(path.to_path_buf()));
+    }
+    let root = fs::canonicalize(path).map_err(|source| RuntimeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let Some(plan) = detect_launch_command(&root) else {
+        return Err(RuntimeError::NoLaunchCommand(root));
+    };
+    spawn_managed(display_path(&root), plan.adapter, plan.command)
+}
+
+fn spawn_managed(
+    project_root: String,
+    adapter: ProjectAdapterKind,
+    command: LaunchCommand,
+) -> Result<ManagedApp, RuntimeError> {
+    let working_directory = PathBuf::from(&command.working_directory);
+    let log_dir = env::temp_dir().join(format!("specprobe-app-{}", unique_suffix()));
+    fs::create_dir_all(&log_dir).map_err(|source| RuntimeError::Io {
+        path: log_dir.clone(),
+        source,
+    })?;
+    let stdout_path = log_dir.join("stdout.log");
+    let stderr_path = log_dir.join("stderr.log");
+    let stdout_file = File::create(&stdout_path).map_err(|source| RuntimeError::Io {
+        path: stdout_path.clone(),
+        source,
+    })?;
+    let stderr_file = File::create(&stderr_path).map_err(|source| RuntimeError::Io {
+        path: stderr_path.clone(),
+        source,
+    })?;
+
+    let mut process = build_process(&command);
+    process
+        .current_dir(&working_directory)
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .kill_on_drop(true);
+
+    let child = process.spawn().map_err(|source| RuntimeError::Io {
+        path: working_directory,
+        source,
+    })?;
+    let pid = child.id();
+
+    Ok(ManagedApp {
+        child,
+        pid,
+        log_dir,
+        stdout_path,
+        stderr_path,
+        project_root,
+        adapter,
+        command,
+        started: Instant::now(),
+        readiness: None,
+    })
+}
+
+impl ManagedApp {
+    /// 轮询 base_url 直到收到任意 HTTP 响应(视为就绪)、进程退出或超时。
+    /// base_url 为 None 时跳过探测,短暂等待让进程初始化。
+    pub async fn wait_until_ready(
+        &mut self,
+        base_url: Option<&str>,
+        timeout_secs: u64,
+    ) -> ReadinessReport {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(timeout_secs.max(1));
+
+        let Some(url) = base_url else {
+            tokio::time::sleep(READINESS_POLL_INTERVAL).await;
+            let report = ReadinessReport {
+                probed: false,
+                ready: true,
+                waited_ms: start.elapsed().as_millis(),
+                detail: "No base URL provided; skipped readiness probe.".to_owned(),
+            };
+            self.readiness = Some(report.clone());
+            return report;
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .ok();
+
+        let report = loop {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                break ReadinessReport {
+                    probed: true,
+                    ready: false,
+                    waited_ms: start.elapsed().as_millis(),
+                    detail: format!(
+                        "Process exited before becoming ready (exit code {:?}).",
+                        status.code()
+                    ),
+                };
+            }
+            if let Some(client) = &client
+                && client.get(url).send().await.is_ok()
+            {
+                break ReadinessReport {
+                    probed: true,
+                    ready: true,
+                    waited_ms: start.elapsed().as_millis(),
+                    detail: format!("Server responded at {url}."),
+                };
+            }
+            if start.elapsed() >= timeout {
+                break ReadinessReport {
+                    probed: true,
+                    ready: false,
+                    waited_ms: start.elapsed().as_millis(),
+                    detail: format!("Timed out after {timeout_secs}s waiting for {url}."),
+                };
+            }
+            tokio::time::sleep(READINESS_POLL_INTERVAL).await;
+        };
+        self.readiness = Some(report.clone());
+        report
+    }
+
+    /// 关停服务:杀进程树、回收、采集脱敏日志,返回 LaunchReport。
+    pub async fn shutdown(mut self) -> LaunchReport {
+        let was_running = matches!(self.child.try_wait(), Ok(None));
+        if let Some(pid) = self.pid {
+            kill_tree(&mut self.child, pid).await;
+        } else {
+            let _ = self.child.start_kill();
+        }
+        let exit_status = self.child.wait().await.ok();
+        let duration_ms = self.started.elapsed().as_millis();
+        let stdout_excerpt = read_redacted_excerpt(&self.stdout_path);
+        let stderr_excerpt = read_redacted_excerpt(&self.stderr_path);
+        let _ = fs::remove_dir_all(&self.log_dir);
+
+        let ready = self
+            .readiness
+            .as_ref()
+            .map(|report| report.ready)
+            .unwrap_or(was_running);
+
+        let mut diagnostics = Vec::new();
+        match &self.readiness {
+            Some(report) if report.probed && report.ready => diagnostics.push(LaunchDiagnostic {
+                severity: RuntimeDiagnosticSeverity::Info,
+                message: format!("Service became ready in {} ms.", report.waited_ms),
+            }),
+            Some(report) if report.probed => diagnostics.push(LaunchDiagnostic {
+                severity: RuntimeDiagnosticSeverity::Error,
+                message: report.detail.clone(),
+            }),
+            _ => {}
+        }
+        if !was_running {
+            diagnostics.push(LaunchDiagnostic {
+                severity: RuntimeDiagnosticSeverity::Error,
+                message: "Service process was no longer running before shutdown.".to_owned(),
+            });
+        }
+
+        LaunchReport {
+            project_root: self.project_root,
+            adapter: self.adapter,
+            command: self.command,
+            execution: LaunchExecution {
+                attempted: true,
+                dry_run: false,
+                success: ready && was_running,
+                timed_out: false,
+                long_running: was_running,
+                exit_code: exit_status.and_then(|status| status.code()),
+                duration_ms,
+                timeout_secs: 0,
+            },
+            readiness: self.readiness,
+            stdout_excerpt,
+            stderr_excerpt,
+            diagnostics,
+        }
+    }
+}
+
+/// 杀进程树。Windows 用 taskkill /T;Unix 依赖 build_process 设置的进程组,
+/// 负 PID 向整组发信号(解决 npm -> node 的孤儿进程泄漏)。
+async fn kill_tree(child: &mut Child, pid: u32) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(format!("-{pid}"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    let _ = child.start_kill();
 }
 
 fn detect_launch_command(root: &Path) -> Option<CommandPlan> {
@@ -418,7 +666,7 @@ fn build_process(command: &LaunchCommand) -> Command {
                 extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
             });
 
-    if is_windows_script {
+    let process = if is_windows_script {
         let mut process = Command::new("cmd.exe");
         process
             .args(["/d", "/c"])
@@ -429,7 +677,15 @@ fn build_process(command: &LaunchCommand) -> Command {
         let mut process = Command::new(executable);
         process.args(&command.args);
         process
-    }
+    };
+    // Unix 上放入新进程组,使关停时可用负 PID 杀掉整棵进程树(如 npm -> node)。
+    #[cfg(unix)]
+    let process = {
+        let mut process = process;
+        process.process_group(0);
+        process
+    };
+    process
 }
 
 fn resolve_program(program: &str) -> Option<PathBuf> {
@@ -507,8 +763,9 @@ mod tests {
 
     use super::{
         CommandConfidence, LaunchCommand, ProjectAdapterKind, detect_launch_command,
-        launch_project, redact_sensitive_lines, run_command,
+        launch_project, redact_sensitive_lines, run_command, spawn_managed,
     };
+    use crate::testutil::{chat_response, spawn_chat_server};
 
     #[test]
     fn detects_node_dev_script() {
@@ -652,6 +909,64 @@ mod tests {
         let redacted = redact_sensitive_lines("ok\nOPENAI_API_KEY=secret\npassword=abc");
 
         assert_eq!(redacted, "ok\n[REDACTED LINE]\n[REDACTED LINE]");
+    }
+
+    fn long_running_command() -> LaunchCommand {
+        let (program, mut args) = if cfg!(windows) {
+            ("cmd".to_owned(), vec!["/d".to_owned(), "/c".to_owned()])
+        } else {
+            ("sh".to_owned(), vec!["-c".to_owned()])
+        };
+        args.push(if cfg!(windows) {
+            "ping -n 30 127.0.0.1 > nul".to_owned()
+        } else {
+            "sleep 30".to_owned()
+        });
+        LaunchCommand {
+            program,
+            args,
+            working_directory: std::env::temp_dir().display().to_string(),
+            source: "test".to_owned(),
+            confidence: CommandConfidence::High,
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_app_probes_ready_server_and_shuts_down() {
+        let (url, handle) = spawn_chat_server(vec![(200, chat_response("{}"))]);
+        let mut app = spawn_managed(
+            "test".to_owned(),
+            ProjectAdapterKind::Unknown,
+            long_running_command(),
+        )
+        .expect("service starts");
+
+        let readiness = app.wait_until_ready(Some(&url), 3).await;
+        assert!(readiness.probed);
+        assert!(readiness.ready);
+
+        let report = app.shutdown().await;
+        handle.join().expect("server thread joins");
+        assert!(report.execution.success);
+        assert!(report.readiness.is_some_and(|readiness| readiness.ready));
+    }
+
+    #[tokio::test]
+    async fn managed_app_reports_unreachable_server() {
+        let mut app = spawn_managed(
+            "test".to_owned(),
+            ProjectAdapterKind::Unknown,
+            long_running_command(),
+        )
+        .expect("service starts");
+
+        // 无人监听的端口:探测在超时后判定未就绪。
+        let readiness = app.wait_until_ready(Some("http://127.0.0.1:1"), 1).await;
+        assert!(readiness.probed);
+        assert!(!readiness.ready);
+
+        let report = app.shutdown().await;
+        assert!(!report.execution.success);
     }
 
     fn temp_project(prefix: &str) -> std::path::PathBuf {

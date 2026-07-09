@@ -106,11 +106,12 @@
 - 产出形如"在 `#task-input` 输入空字符串并点击 `#add-task-btn`,断言列表数量不变",而不是"执行核心操作"。
 - 实施记录:新增 `src/scenario.rs`,复用 1.2 的 `run_chat_json` 传输层。流程:browser 探针采集 DOM 摘要 → `generate_scenarios`(需求 + 元素摘要 → 每需求一个动作序列)→ **静态 selector 校验即"dry-run 校验"**:操作类动作(click/fill/press)的 selector 必须来自页面元素列表,不通过则通过 `run_chat_json` 的反馈重问回路自动修正(≤2 轮),断言/等待类允许任意 CSS selector。执行:每场景前 goto+等待隔离状态、结尾截图,一次 sidecar run 执行所有场景,按 index 区间切回各场景结果。report 新增 `scenarios` 字段;review 消费:失败场景关联需求生成高严重度 Issue。启用条件:有 sidecar + `--provider` 非 Mock;默认 Mock 走 1.4 通用采集。`browser`/`review`/`propose` 均加 `--provider`/`--no-cache`,review 的需求也改走 1.3 精解析。真实浏览器端到端(含 selector 修正回路的真机表现)放最后真机验收。
 
-### 1.6 服务器生命周期编排(3~4 天)
+### 1.6 服务器生命周期编排(3~4 天)——已完成(2026-07-08)
 
 - launch 改造为 `ManagedApp`:启动 → 就绪探测(轮询 base_url / 日志正则,超时可配)→ 就绪后保持运行并持续采集 stdout/stderr → 测试结束后优雅关停。
 - **修进程树 kill**:Windows 用 Job Object(`windows` crate)或 `taskkill /T /F`;Unix 用进程组 kill。
 - `review --execute` 变为编排器管理的完整流程:起服务 → 等就绪 → 跑浏览器计划 → 收尾。消除"健康服务器被报告为失败"的语义错误。
+- 实施记录:runtime.rs 新增 `ManagedApp`(`start_app` 启动持有进程、`wait_until_ready` 轮询 base_url HTTP 直到响应/进程退出/超时、`shutdown` 杀进程树+采集日志返回 LaunchReport)。进程树 kill 采用 **taskkill /T /F(Windows)+ 进程组负 PID kill(Unix,`build_process` 设 `process_group(0)`)**,未引入 windows crate。`LaunchReport` 新增 `readiness` 字段。`review --execute`(且未 skip launch/browser)走 `run_orchestrated`:起服务→等就绪→跑浏览器→关停,取代原先各自独立的一次性 launch;server 起不来则记录 launch 错误并仍尝试浏览器(用户可能自行启动了服务)。就绪即视为 launch 成功(API 500 等属浏览器层证据),消除健康服务器被判失败的语义错误。日志正则就绪探测未做(仅 HTTP 轮询),够用。真机端到端(自动起 FocusBoard + 浏览器)放最后真机验收。
 
 ### 1.7 缺陷诊断真实化(3~4 天)
 

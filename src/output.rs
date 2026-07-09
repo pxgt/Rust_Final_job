@@ -247,6 +247,15 @@ pub fn print_launch_report(report: &LaunchReport, json: bool) -> Result<()> {
         "Duration: {} ms (timeout: {} s)",
         report.execution.duration_ms, report.execution.timeout_secs
     );
+    if let Some(readiness) = &report.readiness {
+        println!(
+            "Readiness: probed={}, ready={}, waited={} ms — {}",
+            yes_no(readiness.probed),
+            yes_no(readiness.ready),
+            readiness.waited_ms,
+            readiness.detail
+        );
+    }
 
     if !report.diagnostics.is_empty() {
         println!("\nDiagnostics");
