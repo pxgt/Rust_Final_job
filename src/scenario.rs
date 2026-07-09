@@ -288,8 +288,10 @@ Allowed actions: goto, wait_for_selector, click, fill, press, expect_visible, ex
 Rules:
 - For click, fill and press you MUST use a selector taken verbatim from the provided interactive elements.
 - For expect_text / expect_visible / wait_for_selector you may target any CSS selector on the page.
-- Each scenario should perform the requirement's action and then assert the observable result.
-- Prefer negative/edge cases when the requirement implies validation (e.g. empty input).
+- Each scenario must perform the requirement's action and then assert the requirement's concrete observable OUTCOME — the changed value, count, or list content — NOT merely that a label or button exists.
+- When the requirement involves a count or statistic, assert the exact expected value with expect_text (e.g. the completed counter should read "1" after one item is completed). A bug that leaves the counter at 0 must make this assertion fail.
+- When the requirement involves filtering or a list changing, assert the concrete resulting content with expect_text (e.g. after filtering to completed tasks, the list should contain the completed item's title and the active-only item should not remain the sole visible entry).
+- Prefer negative/edge cases when the requirement implies validation (e.g. submit an empty title and assert the specific validation message text appears).
 - Do not use the eval action. Do not invent requirement ids. Do not wrap the JSON in markdown fences.
 - Write title, expected_observation and notes in the requirements' language."#
         .to_owned()

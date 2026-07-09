@@ -17,8 +17,14 @@ use crate::requirements::{
 use crate::scenario::{Scenario, generate_scenarios};
 
 const BODY_EXCERPT_LIMIT: usize = 2_000;
-/// Playwright 总执行超时在每动作超时基础上的额外缓冲(秒)。
+/// Playwright 总执行超时的额外缓冲(秒)。
 const PLAYWRIGHT_OVERHEAD_SECS: u64 = 10;
+/// 单个浏览器动作(含失败断言的等待)的超时。
+const ACTION_TIMEOUT_MS: u64 = 6_000;
+/// 整体超时按动作数分摊的每动作预算(秒),需略大于单动作超时以容纳启动开销。
+const PER_ACTION_BUDGET_SECS: u64 = 7;
+/// 整体执行超时上限(秒),防止病态情况下无限等待。
+const MAX_RUN_SECS: u64 = 180;
 
 /// 浏览器执行选项:选择 AI Provider(非 Mock 时生成具体交互场景)与缓存目录。
 #[derive(Debug, Clone, Default)]
@@ -251,27 +257,14 @@ async fn execute_plan(
     diagnostics: &mut Vec<BrowserDiagnostic>,
 ) -> ExecutionOutcome {
     if let Some(location) = detect_runner() {
-        let probe = run_in_dir(
-            &location,
-            base_url,
-            probe_actions(base_url),
-            timeout_secs,
-            "probe",
-        )
-        .await;
+        let probe = run_in_dir(&location, base_url, probe_actions(base_url), "probe").await;
         match probe {
             Ok(evidence) => {
                 if !matches!(options.provider, AiProviderKind::Mock)
                     && let Some(snapshot) = &evidence.outcome.snapshot
                     && !snapshot.interactive.is_empty()
                     && let Some(outcome) = enhance_with_scenarios(
-                        &location,
-                        base_url,
-                        timeout_secs,
-                        report,
-                        snapshot,
-                        options,
-                        diagnostics,
+                        &location, base_url, report, snapshot, options, diagnostics,
                     )
                     .await
                 {
@@ -313,7 +306,6 @@ fn probe_actions(base_url: &str) -> Vec<PlaywrightAction> {
 async fn enhance_with_scenarios(
     location: &RunnerLocation,
     base_url: &str,
-    timeout_secs: u64,
     report: &RequirementReport,
     snapshot: &PageSnapshot,
     options: &BrowserOptions,
@@ -346,7 +338,7 @@ async fn enhance_with_scenarios(
     }
 
     let (actions, ranges) = build_scenario_actions(&plan.scenarios, base_url);
-    let evidence = match run_in_dir(location, base_url, actions, timeout_secs, "scenario").await {
+    let evidence = match run_in_dir(location, base_url, actions, "scenario").await {
         Ok(evidence) => evidence,
         Err(error) => {
             diagnostics.push(BrowserDiagnostic {
@@ -538,7 +530,6 @@ async fn run_in_dir(
     location: &RunnerLocation,
     base_url: &str,
     actions: Vec<PlaywrightAction>,
-    timeout_secs: u64,
     prefix: &str,
 ) -> Result<PlaywrightEvidence, crate::playwright::PlaywrightError> {
     let run_dir = PathBuf::from(".specprobe")
@@ -547,15 +538,20 @@ async fn run_in_dir(
     let _ = fs::create_dir_all(&run_dir);
     let screenshot_dir = fs::canonicalize(&run_dir).unwrap_or_else(|_| run_dir.clone());
 
+    // 单动作超时(含失败断言的等待)与整体超时分开:整体随动作数伸缩并设上限,
+    // 避免多个失败断言累加超过一个固定的小整体超时而误杀整场执行。
+    let action_count = actions.len() as u64;
     let request = BrowserPlanRequest {
         protocol_version: PROTOCOL_VERSION,
         base_url: base_url.to_owned(),
-        timeout_ms: timeout_secs.saturating_mul(1000).max(1000),
+        timeout_ms: ACTION_TIMEOUT_MS,
         screenshot_dir: normalize_path(&screenshot_dir),
         actions,
     };
 
-    let overall = Duration::from_secs(timeout_secs.max(1).saturating_add(PLAYWRIGHT_OVERHEAD_SECS));
+    let overall = Duration::from_secs(
+        (action_count * PER_ACTION_BUDGET_SECS + PLAYWRIGHT_OVERHEAD_SECS).min(MAX_RUN_SECS),
+    );
     let outcome = run_actions(location, &request, overall).await?;
     archive_outcome(&run_dir, &outcome);
 

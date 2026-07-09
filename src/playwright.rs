@@ -199,6 +199,10 @@ pub struct InteractiveElement {
 /// 定位 sidecar:要求 `runner.mjs` 存在且同目录已安装 `node_modules/playwright`。
 /// 后者缺失(未 `npm install`)时视为不可用,调用方降级到 HTTP 探测。
 pub fn detect_runner() -> Option<RunnerLocation> {
+    // 逃生开关:强制走 HTTP 探测(用于对齐无 Node 的 CI、或用户显式禁用浏览器执行)。
+    if env::var_os("SPECPROBE_NO_PLAYWRIGHT").is_some() {
+        return None;
+    }
     runner_candidates()
         .iter()
         .find_map(|candidate| resolve_runner(candidate))

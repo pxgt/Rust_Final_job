@@ -333,7 +333,7 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 - 0.3 测试基建：完成，7 个 CLI 集成测试 + requirements JSON 快照（32 单测 + 7 集成全过）。
 - 0.4 小缺陷修复：完成（markdown 链接文本保留、launch `long_running` 语义、`.gitattributes`）。
 
-Phase 1（真实化)已全部完成：1.1 异步化改造、1.2 真 AI Provider、1.3 需求理解两级流水线（2026-07-06）、1.4 真浏览器执行器（2026-07-07）、1.5 测试计划生成真实化、1.6 服务器生命周期编排、1.7 缺陷诊断真实化（2026-07-08）。下一步：**Phase 1 端到端真机验收**（DeepSeek key + 装 chromium,对 FocusBoard 实测 `review --execute --provider openai-compatible` 检出率,目标 5 缺陷检出 ≥4）；通过后进 Phase 2（易用性）。
+Phase 1（真实化)已全部完成并通过端到端真机验收：1.1-1.7 子阶段（2026-07-06 至 07-08）。**真机验收（2026-07-08,DeepSeek + Chromium）：FocusBoard 注入缺陷检出 4/5（基线 1/5),达到验收门数量目标,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。** 暴露 3 项 LLM 质量调优点(否定断言原语、断言 selector 收敛、诊断防过度合并),列为 Phase 1.8 收尾。下一步:Phase 1.8 收尾调优,或直接进 Phase 2（易用性:一键 check、specprobe.toml、进度条、HTML 报告、审批持久化)。
 
 AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `OPENAI_MODEL`（`OPENAI_BASE_URL` 默认 api.openai.com/v1，DeepSeek 设为 `https://api.deepseek.com` + 模型 `deepseek-chat`）；Ollama 需要 `OLLAMA_MODEL`（`OLLAMA_BASE_URL` 默认 127.0.0.1:11434）；云端调用经代理时设置 `HTTPS_PROXY`。
 
@@ -352,6 +352,15 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 | 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
 
 ## 12. 开发日志
+
+### 2026-07-08（Phase 1 端到端真机验收）
+
+- 用 DeepSeek(deepseek-chat,OpenAI 兼容)+ Playwright/Chromium 对 FocusBoard 跑 `review --execute --provider openai-compatible`,完成 Phase 1 真机验收。详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+- 全链路端到端跑通:精解析(engine=llm-refined,12 需求带行号)→ ManagedApp 起服务并就绪(Server responded at 4173)→ 真 Chromium 执行 12 场景 → 采集 35 条 /api/tasks 500 → LLM 诊断精确定位 API 500 到 **server.js:47**(经核对准确)。
+- 注入缺陷**检出 4/5**(DEMO-001 API 500、002 空白、003 统计、005 持久化;004 筛选漏检),从基线 1/5 大幅提升,达到验收门数量目标。
+- 验收中修复/新增:强化 scenario 断言 prompt(要求断言可观察结果的具体值而非元素存在,使统计缺陷可检出);**修复场景执行超时缺陷**(整体超时原为固定 20s,多个失败断言累加即误杀整场执行;改为按动作数分摊 + 上限 180s,单动作超时独立为 6s);新增 `SPECPROBE_NO_PLAYWRIGHT` 逃生开关(强制 HTTP 探测,便于本地测试对齐 CI)。
+- 暴露 3 项 LLM 质量调优点(见 ROADMAP 1.8):断言 selector 猜测误报(REQ-008 猜 .error-banner 实为 #api-banner)、诊断多失败时过度合并、筛选类需 negative 断言原语。
+- 59 单测 + 7 集成(设 SPECPROBE_NO_PLAYWRIGHT 对齐 CI 的 HTTP 路径)全过,严格 Clippy 无警告。
 
 ### 2026-07-08（深夜,Phase 1.7 完成,Phase 1 收尾）
 

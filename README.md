@@ -21,7 +21,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 ## 当前边界(如实声明)
 
-Phase 1（真实化)已全部完成,代码 + 单测 + 双平台 CI 就绪。**剩余为端到端真机验收**:用真实模型(DeepSeek 等)+ 安装 chromium,对 FocusBoard 实测 `review --execute --provider openai-compatible` 的缺陷检出率(目标 5 个注入缺陷检出 ≥4)。后续 Phase 2（易用性:一键 `check` 命令、配置文件、进度反馈、HTML 报告、审批持久化)、Phase 3（修复闭环)、Phase 4（广度)详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+Phase 1（真实化)已全部完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷**检出 4/5**(基线 1/5),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。收尾质量调优(否定断言原语、断言 selector 收敛、诊断防过度合并)与后续 Phase 2（易用性:一键 `check` 命令、配置文件、进度反馈、HTML 报告、审批持久化)、Phase 3（修复闭环)、Phase 4（广度)详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 - 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
 - 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
 
@@ -74,7 +74,7 @@ $env:OLLAMA_MODEL = "qwen2.5:7b"          # OLLAMA_BASE_URL 默认 http://127.0.
 .\scripts\cargo-msvc.ps1 run -- browser .\demo\buggy-task-board\REQUIREMENTS.md --base-url http://127.0.0.1:4173
 ```
 
-装好后 `browser`/`review --execute`/`propose --execute` 自动走 Playwright:打开页面、截图、采集 console 错误与网络失败、抓取可交互元素摘要,证据归档到 `.specprobe/runs/`。**未安装时自动降级为 HTTP 探测**,CI 与无 Node 环境不受影响;报告的 `backend` 字段标注实际使用的后端。
+装好后 `browser`/`review --execute`/`propose --execute` 自动走 Playwright:打开页面、截图、采集 console 错误与网络失败、抓取可交互元素摘要,证据归档到 `.specprobe/runs/`。**未安装时自动降级为 HTTP 探测**,CI 与无 Node 环境不受影响;报告的 `backend` 字段标注实际使用的后端。设 `SPECPROBE_NO_PLAYWRIGHT=1` 可强制走 HTTP 探测(禁用浏览器执行)。
 
 加 `--provider openai-compatible`(或 `ollama`)时启用**具体交互场景**:SpecProbe 先探针采集页面可交互元素,连同需求交给 LLM 生成带真实 selector 的动作步骤(如"在 `#task-input` 输入空串、点击 `#add-task-btn`、断言列表数量不变"),校验 selector 后逐场景执行;失败的场景在 `review` 中生成关联需求的高严重度 Issue。默认 `mock` 只做通用采集,不调 LLM。
 

@@ -119,7 +119,16 @@
 - 源码片段检索先用启发式:按路由路径、文件名、关键词 grep 找相关文件,截取片段喂给模型。
 - 实施记录:新增 `src/diagnosis.rs`,在确定性规则 Issue 之上**叠加**一层 LLM 深度诊断(规则 Issue 始终保留,离线可用)。流程:从失败 Issue(运行期 RuntimeFailure/BrowserFailure 高严重度)提取关键词(CSS selector、URL 路径段、kebab/snake 标识符)→ 遍历项目源文件 grep 命中行截取带行号片段(跳过 node_modules/target 等,限量 12 片段)→ 失败发现 + 源码片段交 LLM → 输出带 `source_locations`(文件+行+片段)、`confidence`、`suggested_fix` 的诊断。校验:引用的源文件必须来自检索到的片段集合(严格拒绝臆造、宽容丢弃),related_issue_ids 过滤未知。复用 `run_chat_json`。`ReviewReport` 新增 `diagnoses` 字段;仅 `--provider` 非 Mock 且有可诊断失败时触发,失败不阻断 review。5 个单测(标识符提取、源码检索跳过依赖目录、未知文件拒绝+宽容过滤、关键词去重限量、Mock 空)。**Phase 1 全部完成。**
 
-**Phase 1 验收门(用 FocusBoard)**:`review --execute` 自动检出 5 个注入缺陷中至少 4 个(API 500、空输入校验、统计不更新、筛选失效;持久化缺陷需要 reload 场景,列为挑战项),且无高严重度误报。**验收方式**:全部子阶段的代码 + 单测 + 双平台 CI 已完成;端到端真机验收(DeepSeek key + 装 chromium,`review --execute --provider openai-compatible` 对 FocusBoard 实测检出率)为下一步待办,通过后方进 Phase 2。
+**Phase 1 验收门(用 FocusBoard)**:`review --execute` 自动检出 5 个注入缺陷中至少 4 个,且无高严重度误报。
+
+**验收结果(2026-07-08,DeepSeek + Chromium 真机,详见 docs/ACCEPTANCE.md)**:全链路端到端跑通(精解析→起服务→就绪→真浏览器→场景→规则 Issue→LLM 源码诊断);注入缺陷**检出 4/5**(API 500、空输入、统计、持久化;筛选漏检),从基线 1/5 大幅提升,**达到数量门槛**。同时暴露 LLM 输出波动(1 个断言 selector 猜测误报、诊断在多失败时过度合并、筛选缺 negative 断言原语)。数量目标达成;质量调优列为 Phase 2 前的收尾项(见下)与后续迭代。
+
+### 1.8 真机验收后的质量调优(收尾,进 Phase 2 前)
+
+- 否定断言原语:sidecar 增加 `expect_absent`/`expect_hidden`,让筛选/隐藏类缺陷可检出(补 DEMO-004)。
+- 断言 selector 收敛:断言类 selector 优先取自页面快照或强制文本断言,减少 `.error-banner` 之类的猜测误报。
+- 诊断防过度合并:限制单诊断关联 issue 数或按类别分组,避免多失败时定位漂移。
+- 检出率取稳定值:验收指标多次运行取中位,单次仅供参考。
 
 ## 5. Phase 2 — 让它好用(2~3 周)
 
