@@ -264,7 +264,12 @@ async fn execute_plan(
                     && let Some(snapshot) = &evidence.outcome.snapshot
                     && !snapshot.interactive.is_empty()
                     && let Some(outcome) = enhance_with_scenarios(
-                        &location, base_url, report, snapshot, options, diagnostics,
+                        &location,
+                        base_url,
+                        report,
+                        snapshot,
+                        options,
+                        diagnostics,
                     )
                     .await
                 {
