@@ -353,6 +353,13 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 
 ## 12. 开发日志
 
+### 2026-07-08（Phase 1.8 质量调优,机制完成）
+
+- 三项机制改进落地:①新增 `expect_hidden` 否定断言原语(playwright.rs + sidecar `waitForSelector state:hidden` + scenario 支持);②scenario prompt 收敛断言 selector(优先文本断言,消除 `.error-banner` 类误报);③diagnosis prompt 防过度合并(每根因一诊断)。
+- 真机 `--no-cache` 复测:REQ-008 误报消除✅、诊断恢复 3 个独立✅、expect_hidden 可用✅;但暴露 LLM 场景生成内在波动(漏 click 步骤、否定断言编造目标、断言强度回退),检出率单次 3~4/5 波动。
+- **判断**:纯 prompt 调优触及天花板;稳定提升需场景执行级修复回路(生成→dry 执行→失败回喂修正)+ 多次采样,属独立硬骨头(见 ROADMAP 1.8 遗留)。1.8 机制为正确基础设施,保留。
+- 60 单测 + 7 集成全过,严格 Clippy 无警告。
+
 ### 2026-07-08（Phase 1 端到端真机验收）
 
 - 用 DeepSeek(deepseek-chat,OpenAI 兼容)+ Playwright/Chromium 对 FocusBoard 跑 `review --execute --provider openai-compatible`,完成 Phase 1 真机验收。详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。

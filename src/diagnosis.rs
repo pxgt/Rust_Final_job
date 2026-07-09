@@ -372,8 +372,8 @@ Respond with a single JSON object and nothing else, matching this schema exactly
 
 Rules:
 - Ground every source_locations.file in the provided snippets; never invent file paths. If the snippets do not contain the cause, return an empty source_locations and lower confidence.
-- Group findings that share one root cause into a single diagnosis.
-- root_cause and suggested_fix must be concrete and reference the observed evidence.
+- Produce ONE diagnosis per distinct root cause. Only group findings that genuinely share the SAME underlying defect. Do NOT merge unrelated failures (e.g. a backend 500, a missing validation message, and a localStorage bug are three separate root causes → three diagnoses). related_issue_ids must list only the issues explained by that one cause.
+- root_cause and suggested_fix must be concrete and reference the observed evidence and the cited source location.
 - Write title, root_cause and suggested_fix in the findings' language.
 - Do not wrap the JSON in markdown fences."#
         .to_owned()

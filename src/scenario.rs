@@ -244,6 +244,9 @@ fn to_action(
         "expect_visible" => Ok(PlaywrightAction::ExpectVisible {
             selector: selector()?,
         }),
+        "expect_hidden" => Ok(PlaywrightAction::ExpectHidden {
+            selector: selector()?,
+        }),
         "expect_text" => Ok(PlaywrightAction::ExpectText {
             selector: selector()?,
             text: step
@@ -284,13 +287,13 @@ Respond with a single JSON object and nothing else, matching this schema exactly
   "notes": [string]
 }
 
-Allowed actions: goto, wait_for_selector, click, fill, press, expect_visible, expect_text, screenshot.
+Allowed actions: goto, wait_for_selector, click, fill, press, expect_visible, expect_hidden, expect_text, screenshot.
 Rules:
 - For click, fill and press you MUST use a selector taken verbatim from the provided interactive elements.
-- For expect_text / expect_visible / wait_for_selector you may target any CSS selector on the page.
+- For assertions (expect_text / expect_visible / expect_hidden / wait_for_selector) you may target any CSS selector, but PREFER text-based checks: use expect_text with a container selector, or a `text=` selector, rather than guessing a class or id that is not in the provided elements. Guessed selectors like `.error-banner` cause false results — assert the visible TEXT the requirement promises instead.
 - Each scenario must perform the requirement's action and then assert the requirement's concrete observable OUTCOME — the changed value, count, or list content — NOT merely that a label or button exists.
 - When the requirement involves a count or statistic, assert the exact expected value with expect_text (e.g. the completed counter should read "1" after one item is completed). A bug that leaves the counter at 0 must make this assertion fail.
-- When the requirement involves filtering or a list changing, assert the concrete resulting content with expect_text (e.g. after filtering to completed tasks, the list should contain the completed item's title and the active-only item should not remain the sole visible entry).
+- When the requirement involves filtering or hiding, use expect_hidden to assert that items which should be filtered OUT are no longer visible (e.g. after clicking the "completed" filter, an active/unfinished task must become hidden). A bug that still shows everything must make this assertion fail.
 - Prefer negative/edge cases when the requirement implies validation (e.g. submit an empty title and assert the specific validation message text appears).
 - Do not use the eval action. Do not invent requirement ids. Do not wrap the JSON in markdown fences.
 - Write title, expected_observation and notes in the requirements' language."#
@@ -398,6 +401,32 @@ mod tests {
         assert_eq!(scenario.steps.len(), 3);
         assert_eq!(scenario.steps[1].label(), "click");
         assert_eq!(scenario.steps[1].target(), "#add-task-btn");
+    }
+
+    #[test]
+    fn parses_expect_hidden_for_filtering() {
+        let report = report();
+        let snapshot = snapshot();
+        let content = serde_json::json!({
+            "scenarios": [{
+                "requirement_id": "REQ-001",
+                "title": "筛选隐藏未完成任务",
+                "expected_observation": "点击已完成筛选后未完成任务被隐藏",
+                "steps": [
+                    {"action": "click", "selector": "#add-task-btn"},
+                    {"action": "expect_hidden", "selector": "ul li:not(.completed)"}
+                ]
+            }],
+            "notes": []
+        })
+        .to_string();
+
+        let parsed = parse_scenarios(&content, &report, &snapshot, "http://x", false)
+            .expect("expect_hidden parses");
+        let steps = &parsed.scenarios[0].steps;
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[1].label(), "expect_hidden");
+        assert_eq!(steps[1].target(), "ul li:not(.completed)");
     }
 
     #[test]

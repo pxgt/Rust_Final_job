@@ -46,20 +46,45 @@ pub struct BrowserPlanRequest {
     pub actions: Vec<PlaywrightAction>,
 }
 
-/// 9 个动作原语。首版计划生成只用到 goto/wait_for_selector/screenshot;
-/// 其余为 1.5 生成具体交互步骤预留。
+/// 动作原语。探针只用 goto/wait_for_selector/screenshot;其余用于 1.5 的
+/// 具体交互步骤,expect_hidden 用于 1.8 的筛选/隐藏类否定断言。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PlaywrightAction {
-    Goto { url: String },
-    WaitForSelector { selector: String },
-    Click { selector: String },
-    Fill { selector: String, value: String },
-    Press { selector: String, key: String },
-    ExpectVisible { selector: String },
-    ExpectText { selector: String, text: String },
-    Screenshot { name: String },
-    Eval { expression: String },
+    Goto {
+        url: String,
+    },
+    WaitForSelector {
+        selector: String,
+    },
+    Click {
+        selector: String,
+    },
+    Fill {
+        selector: String,
+        value: String,
+    },
+    Press {
+        selector: String,
+        key: String,
+    },
+    ExpectVisible {
+        selector: String,
+    },
+    /// 断言元素不可见或不存在(用于筛选/隐藏类需求的否定断言)。
+    ExpectHidden {
+        selector: String,
+    },
+    ExpectText {
+        selector: String,
+        text: String,
+    },
+    Screenshot {
+        name: String,
+    },
+    Eval {
+        expression: String,
+    },
 }
 
 impl PlaywrightAction {
@@ -71,6 +96,7 @@ impl PlaywrightAction {
             Self::Fill { .. } => "fill",
             Self::Press { .. } => "press",
             Self::ExpectVisible { .. } => "expect_visible",
+            Self::ExpectHidden { .. } => "expect_hidden",
             Self::ExpectText { .. } => "expect_text",
             Self::Screenshot { .. } => "screenshot",
             Self::Eval { .. } => "eval",
@@ -86,6 +112,7 @@ impl PlaywrightAction {
             Self::WaitForSelector { selector }
             | Self::Click { selector }
             | Self::ExpectVisible { selector }
+            | Self::ExpectHidden { selector }
             | Self::Fill { selector, .. }
             | Self::Press { selector, .. }
             | Self::ExpectText { selector, .. } => selector.clone(),

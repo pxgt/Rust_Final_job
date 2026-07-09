@@ -88,6 +88,15 @@ async function runAction(page, action, index, timeout, screenshotDir) {
       if (!visible) throw new Error(`${action.selector} is not visible`);
       return { detail: `${action.selector} is visible` };
     }
+    case "expect_hidden": {
+      // 等待元素变为不可见或从 DOM 移除;超时说明它仍可见 → 断言失败。
+      try {
+        await page.waitForSelector(action.selector, { state: "hidden", timeout });
+      } catch {
+        throw new Error(`${action.selector} is still visible`);
+      }
+      return { detail: `${action.selector} is hidden or absent` };
+    }
     case "expect_text": {
       const content = (await page.textContent(action.selector, { timeout })) ?? "";
       if (!content.includes(action.text)) {
