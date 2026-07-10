@@ -459,18 +459,16 @@ fn finish_playwright(
             ),
         });
     }
-    for failure in &evidence.outcome.network_failures {
+    // 网络失败按 (url, 状态/原因) 有序去重并计数,避免同一接口的重复请求刷屏。
+    for (label, count) in aggregate_network_failures(&evidence.outcome.network_failures) {
+        let times = if count > 1 {
+            format!(" ({count}x)")
+        } else {
+            String::new()
+        };
         diagnostics.push(BrowserDiagnostic {
             severity: BrowserDiagnosticSeverity::Error,
-            message: format!(
-                "Network failure: {}{}",
-                failure.url,
-                failure
-                    .status
-                    .map(|status| format!(" (HTTP {status})"))
-                    .or_else(|| failure.failure.clone().map(|text| format!(" ({text})")))
-                    .unwrap_or_default()
-            ),
+            message: format!("Network failure{times}: {label}"),
         });
     }
     for error in &evidence.outcome.page_errors {
@@ -487,6 +485,33 @@ fn finish_playwright(
         playwright: Some(evidence),
         scenarios,
     }
+}
+
+/// 按人类可读标签有序去重网络失败并计数(同一接口的重复请求聚合为一条)。
+fn aggregate_network_failures(
+    failures: &[crate::playwright::NetworkFailure],
+) -> Vec<(String, usize)> {
+    let mut aggregated: Vec<(String, usize)> = Vec::new();
+    for failure in failures {
+        let label = format!(
+            "{}{}",
+            failure.url,
+            failure
+                .status
+                .map(|status| format!(" (HTTP {status})"))
+                .or_else(|| failure.failure.clone().map(|text| format!(" ({text})")))
+                .unwrap_or_default()
+        );
+        if let Some(entry) = aggregated
+            .iter_mut()
+            .find(|(existing, _)| *existing == label)
+        {
+            entry.1 += 1;
+        } else {
+            aggregated.push((label, 1));
+        }
+    }
+    aggregated
 }
 
 async fn http_fallback(

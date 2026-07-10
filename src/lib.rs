@@ -7,6 +7,7 @@ pub mod output;
 pub mod playwright;
 pub mod refine;
 pub mod remediation;
+pub mod report;
 pub mod requirements;
 pub mod review;
 pub mod runtime;
@@ -122,6 +123,7 @@ pub async fn run() -> Result<()> {
             skip_browser,
             launch_timeout_secs,
             browser_timeout_secs,
+            html,
             json,
         } => {
             let report = review::generate_review_report(
@@ -139,6 +141,10 @@ pub async fn run() -> Result<()> {
                 },
             )
             .await?;
+            if let Some(html_path) = html {
+                report::write_review_html(&report, &html_path)?;
+                eprintln!("HTML report written to {}", html_path.display());
+            }
             output::print_review_report(&report, json)?;
         }
         Command::Propose {

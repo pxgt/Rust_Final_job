@@ -682,7 +682,12 @@ fn collect_browser_evidence(
                 ));
             }
 
-            if report.execution.attempted && !report.execution.success {
+            // 仅当没有具体场景结果时,才生成这条笼统的浏览器失败问题;
+            // 有场景时由更精确的场景失败问题(collect_scenario_evidence)覆盖,避免冗余与超长拼接。
+            if report.execution.attempted
+                && !report.execution.success
+                && report.scenarios.is_empty()
+            {
                 builder.add_issue(IssueDraft {
                     severity: IssueSeverity::High,
                     category: IssueCategory::BrowserFailure,
@@ -749,16 +754,29 @@ fn collect_playwright_evidence(builder: &mut ReviewBuilder, report: &BrowserRunR
     }
 
     if !outcome.network_failures.is_empty() {
-        let detail = outcome
-            .network_failures
+        // 去重:同一 (url, status) 只列一次,附出现次数,避免重复请求刷屏。
+        let mut unique: Vec<(String, usize)> = Vec::new();
+        for failure in &outcome.network_failures {
+            let status = failure
+                .status
+                .map(|code| format!(" (HTTP {code})"))
+                .unwrap_or_default();
+            let label = format!("{}{status}", failure.url);
+            if let Some(entry) = unique.iter_mut().find(|(existing, _)| *existing == label) {
+                entry.1 += 1;
+            } else {
+                unique.push((label, 1));
+            }
+        }
+        let detail = unique
             .iter()
             .take(10)
-            .map(|failure| {
-                let status = failure
-                    .status
-                    .map(|code| format!(" (HTTP {code})"))
-                    .unwrap_or_default();
-                format!("{}{status}", failure.url)
+            .map(|(label, count)| {
+                if *count > 1 {
+                    format!("{label} x{count}")
+                } else {
+                    label.clone()
+                }
             })
             .collect::<Vec<_>>()
             .join("; ");
@@ -768,7 +786,8 @@ fn collect_playwright_evidence(builder: &mut ReviewBuilder, report: &BrowserRunR
             &report.base_url,
             None,
             format!(
-                "Browser observed {} network failure(s) during execution.",
+                "Browser observed {} distinct network failure(s) ({} total requests).",
+                unique.len(),
                 outcome.network_failures.len()
             ),
             detail.clone(),

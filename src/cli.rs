@@ -135,6 +135,9 @@ pub enum Command {
         /// Maximum browser page probe time.
         #[arg(long, default_value_t = 10)]
         browser_timeout_secs: u64,
+        /// Also write a self-contained HTML report to this path.
+        #[arg(long, value_name = "PATH")]
+        html: Option<PathBuf>,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
