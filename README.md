@@ -17,6 +17,7 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 ## 当前能力(0.8.0)
 
 - `specprobe check [PATH]`:一键检查(上文快速开始),是面向用户的主入口;以下子命令用于分步调试。
+- `specprobe init [PATH]`:在项目根生成 `specprobe.toml` 配置模板,把常用参数(base_url、provider、需求源、超时等)写进去,之后 `check` 就不必每次带一串 flag。优先级:CLI 参数 > 环境变量 > 配置文件 > 默认。
 - `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
 - `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
 - `specprobe requirements <PATH>`:两级流水线解析需求文档——规则引擎粗筛兜底,`--provider openai-compatible|ollama` 启用 LLM 精解析(带行号溯源、具体到页面/接口的验收标准,校验失败自动回退规则结果);测试计划始终由确定性代码从需求生成。

@@ -2,6 +2,7 @@ pub mod ai;
 pub mod browser;
 pub mod check;
 pub mod cli;
+pub mod config;
 pub mod diagnosis;
 pub mod doctor;
 pub mod output;
@@ -43,15 +44,32 @@ pub async fn run() -> Result<()> {
             browser_timeout_secs,
             json,
         } => {
+            let loaded = config::load_project_config(&path)?;
+            if let Some(loaded) = &loaded {
+                eprintln!("Using configuration from {}", loaded.source.display());
+            }
+            let settings = config::resolve_settings(
+                &path,
+                config::CliOverrides {
+                    base_url,
+                    provider,
+                    requirements,
+                    launch_timeout_secs,
+                    browser_timeout_secs,
+                    no_cache,
+                },
+                config::EnvOverrides::from_process_env(),
+                loaded.as_ref(),
+            )?;
             let report = check::run_check(check::CheckOptions {
                 path,
-                requirements,
-                base_url,
-                provider,
-                cache_dir: cache_dir_unless(no_cache),
+                requirements: settings.requirements,
+                base_url: settings.base_url,
+                provider: settings.provider,
+                cache_dir: cache_dir_unless(settings.no_cache),
                 assume_yes: yes,
-                launch_timeout_secs,
-                browser_timeout_secs,
+                launch_timeout_secs: settings.launch_timeout_secs,
+                browser_timeout_secs: settings.browser_timeout_secs,
             })
             .await?;
             if !no_html {
@@ -64,6 +82,10 @@ pub async fn run() -> Result<()> {
                 eprintln!("HTML report written to {}", html.display());
             }
             output::print_check_report(&report, json)?;
+        }
+        Command::Init { path, force } => {
+            let target = config::write_template(&path, force)?;
+            println!("Wrote configuration template to {}", target.display());
         }
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();

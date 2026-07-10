@@ -22,15 +22,15 @@ pub enum Command {
         /// Project directory (also searched for requirement documents).
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Requirement document or directory override. Defaults to PATH.
+        /// Requirement document or directory override. Defaults to PATH (or specprobe.toml).
         #[arg(long)]
         requirements: Option<PathBuf>,
-        /// Base URL for the web application under test.
-        #[arg(long, default_value = "http://127.0.0.1:3000")]
-        base_url: String,
-        /// AI provider for refinement, browser scenarios and diagnosis. Mock stays offline.
-        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
-        provider: AiProviderKind,
+        /// Base URL for the web application under test (default http://127.0.0.1:3000; configurable via specprobe.toml).
+        #[arg(long)]
+        base_url: Option<String>,
+        /// AI provider for refinement, browser scenarios and diagnosis (default mock; configurable via specprobe.toml).
+        #[arg(long, value_enum)]
+        provider: Option<AiProviderKind>,
         /// Disable the on-disk AI response cache (.specprobe/cache).
         #[arg(long)]
         no_cache: bool,
@@ -43,15 +43,24 @@ pub enum Command {
         /// Skip writing the HTML report.
         #[arg(long)]
         no_html: bool,
-        /// Maximum launch/readiness time.
-        #[arg(long, default_value_t = 15)]
-        launch_timeout_secs: u64,
-        /// Maximum browser page probe time.
-        #[arg(long, default_value_t = 10)]
-        browser_timeout_secs: u64,
+        /// Maximum launch/readiness time in seconds (default 15).
+        #[arg(long)]
+        launch_timeout_secs: Option<u64>,
+        /// Maximum browser page probe time in seconds (default 10).
+        #[arg(long)]
+        browser_timeout_secs: Option<u64>,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Write a specprobe.toml configuration template into a project.
+    Init {
+        /// Project directory to initialize.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Overwrite an existing specprobe.toml.
+        #[arg(long)]
+        force: bool,
     },
     /// Check whether the local machine is ready for analysis and web testing.
     Doctor {
