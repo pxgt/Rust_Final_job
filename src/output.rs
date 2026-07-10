@@ -2,12 +2,33 @@ use anyhow::Result;
 
 use crate::ai::AiAnalysisReport;
 use crate::browser::BrowserRunReport;
+use crate::check::CheckReport;
 use crate::doctor::DoctorReport;
 use crate::remediation::RemediationReport;
 use crate::requirements::RequirementReport;
 use crate::review::ReviewReport;
 use crate::runtime::LaunchReport;
 use crate::scanner::ProjectProfile;
+
+pub fn print_check_report(report: &CheckReport, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+
+    println!("SpecProbe check");
+    println!("===============");
+    println!(
+        "Project: {} ({})",
+        report.profile.root,
+        report.profile.technologies.join(", ")
+    );
+    if !report.executed {
+        println!("Mode: plan-only (launch command was not confirmed; rerun with --yes to execute)");
+    }
+    println!();
+    print_review_report(&report.review, false)
+}
 
 pub fn print_doctor_report(report: &DoctorReport, json: bool) -> Result<()> {
     if json {

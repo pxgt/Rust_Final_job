@@ -17,6 +17,42 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// One-shot inspection: scan, refine requirements, run the app and browser, report.
+    Check {
+        /// Project directory (also searched for requirement documents).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Requirement document or directory override. Defaults to PATH.
+        #[arg(long)]
+        requirements: Option<PathBuf>,
+        /// Base URL for the web application under test.
+        #[arg(long, default_value = "http://127.0.0.1:3000")]
+        base_url: String,
+        /// AI provider for refinement, browser scenarios and diagnosis. Mock stays offline.
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
+        /// Execute the detected launch command without asking for confirmation.
+        #[arg(long)]
+        yes: bool,
+        /// Where to write the HTML report.
+        #[arg(long, value_name = "PATH", default_value = ".specprobe/report.html")]
+        html: PathBuf,
+        /// Skip writing the HTML report.
+        #[arg(long)]
+        no_html: bool,
+        /// Maximum launch/readiness time.
+        #[arg(long, default_value_t = 15)]
+        launch_timeout_secs: u64,
+        /// Maximum browser page probe time.
+        #[arg(long, default_value_t = 10)]
+        browser_timeout_secs: u64,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check whether the local machine is ready for analysis and web testing.
     Doctor {
         /// Emit machine-readable JSON.

@@ -6,8 +6,17 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 
 项目起源于 Rust 课程大作业(0.8.0 完成课程阶段交付),现已按产品化目标推进,完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
+## 快速开始
+
+```powershell
+specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
+```
+
+一条命令完成:扫描技术栈 → 解析需求 → (确认后)自动启动被测服务并探测就绪 → 真实浏览器执行 → 生成问题清单与 `.specprobe/report.html` 可视化报告。执行项目启动命令前会交互确认(`--yes` 跳过);加 `--provider openai-compatible|ollama` 启用 LLM 精解析、具体交互场景与源码级诊断。
+
 ## 当前能力(0.8.0)
 
+- `specprobe check [PATH]`:一键检查(上文快速开始),是面向用户的主入口;以下子命令用于分步调试。
 - `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
 - `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
 - `specprobe requirements <PATH>`:两级流水线解析需求文档——规则引擎粗筛兜底,`--provider openai-compatible|ollama` 启用 LLM 精解析(带行号溯源、具体到页面/接口的验收标准,校验失败自动回退规则结果);测试计划始终由确定性代码从需求生成。
@@ -19,13 +28,11 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 
-## 当前边界(如实声明)
+## 当前状态与边界(如实声明)
 
-Phase 1（真实化)已全部完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷**检出 4/5**(基线 1/5),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。收尾质量调优(否定断言原语、断言 selector 收敛、诊断防过度合并)与后续 Phase 2（易用性:一键 `check` 命令、配置文件、进度反馈、HTML 报告、审批持久化)、Phase 3（修复闭环)、Phase 4（广度)详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
-- 服务器生命周期编排:`launch` 以"进程退出"为终点,长驻服务器会在超时后被终止。
-- 审批持久化与补丁应用:Issue 审批状态不落盘,修复提案只生成预览,不修改用户代码。
+Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)进行中:一键 `check` 与 HTML 报告已完成。
 
-在 FocusBoard 基准(5 个注入缺陷)上,当前版本自动检出 1/5,详见 [docs/EXPERIMENT.md](docs/EXPERIMENT.md)。
+尚未实现:配置文件(`specprobe.toml`)、进度条、运行归档索引与审批状态持久化(Issue 审批恒为 pending)、补丁自动应用(提案只生成预览,不修改用户代码)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。
 
 ## 本地运行
 

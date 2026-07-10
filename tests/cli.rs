@@ -125,6 +125,29 @@ fn review_plan_only_reports_pending_issues() {
 }
 
 #[test]
+fn check_declines_execution_without_confirmation() {
+    // stdin 关闭(EOF)→ 确认被拒绝 → 安全降级为计划级。
+    let report = run_json(&[
+        "check",
+        &project_path("demo/buggy-task-board"),
+        "--no-html",
+        "--json",
+    ]);
+
+    assert_eq!(report["executed"], false);
+    assert_eq!(report["review"]["config"]["execute"], false);
+    let technologies = report["profile"]["technologies"]
+        .as_array()
+        .expect("technologies array");
+    assert!(!technologies.is_empty());
+    assert!(
+        report["review"]["summary"]["requirements"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+}
+
+#[test]
 fn propose_generates_proposal_per_issue_without_auto_apply() {
     let report = run_json(&[
         "propose",

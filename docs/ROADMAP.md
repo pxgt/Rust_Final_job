@@ -142,7 +142,7 @@
 
 | 编号 | 任务 | 具体落实 |
 | --- | --- | --- |
-| 2.1 | 一键主命令 `specprobe check [PATH]` | 串起 scan → requirements → 计划 → 启动 → 浏览器 → 诊断 → 报告,成为默认入口;现有 8 个子命令降级为分步调试工具。首次执行前交互确认启动命令(安全边界),`--yes` 跳过 |
+| 2.1 | 一键主命令 `specprobe check [PATH]` ✅ 已完成(2026-07-10) | 新增 `src/check.rs`:scan → 需求精解析 → 编排执行 → 浏览器 → 诊断,默认写 `.specprobe/report.html`(`--no-html` 关闭)。安全边界:探测到启动命令时交互确认(stderr 提问,非 TTY/EOF 视为拒绝并安全降级为计划级),`--yes` 跳过;未检测到命令则无需确认。确认回调可注入(单测覆盖拒绝降级、提示词含命令、无命令跳过确认);真机验证一条命令从零到 HTML 报告 |
 | 2.2 | 配置文件 `specprobe.toml` | 项目根:base_url、启动命令覆盖、就绪探测、超时、provider/model、需求文档 glob、忽略路径。`specprobe init` 生成模板。优先级:CLI 参数 > 环境变量 > 项目配置 > 用户级 `~/.config/specprobe/config.toml`。解决"8 个命令各带 7~9 个 flag"的问题 |
 | 2.3 | 终端体验 | `indicatif` 每阶段进度条/spinner(消除 launch 的长静默);彩色分级输出;错误信息带"下一步怎么办"建议(可用 `miette`)。`--json` 模式进度走 stderr,stdout 保持纯 JSON |
 | 2.4 | 运行归档与状态存储 | `.specprobe/runs/<timestamp-id>/` 存 report.json + 证据;SQLite(`rusqlite`)存运行索引、Issue 状态、审批记录。新增 `specprobe runs list / show / diff` |

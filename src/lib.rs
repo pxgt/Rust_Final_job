@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod browser;
+pub mod check;
 pub mod cli;
 pub mod diagnosis;
 pub mod doctor;
@@ -29,6 +30,41 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Check {
+            path,
+            requirements,
+            base_url,
+            provider,
+            no_cache,
+            yes,
+            html,
+            no_html,
+            launch_timeout_secs,
+            browser_timeout_secs,
+            json,
+        } => {
+            let report = check::run_check(check::CheckOptions {
+                path,
+                requirements,
+                base_url,
+                provider,
+                cache_dir: cache_dir_unless(no_cache),
+                assume_yes: yes,
+                launch_timeout_secs,
+                browser_timeout_secs,
+            })
+            .await?;
+            if !no_html {
+                if let Some(parent) = html.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)?;
+                }
+                report::write_review_html(&report.review, &html)?;
+                eprintln!("HTML report written to {}", html.display());
+            }
+            output::print_check_report(&report, json)?;
+        }
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();
             output::print_doctor_report(&report, json)?;
