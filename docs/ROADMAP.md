@@ -147,7 +147,7 @@
 | 2.3 | 终端体验 | `indicatif` 每阶段进度条/spinner(消除 launch 的长静默);彩色分级输出;错误信息带"下一步怎么办"建议(可用 `miette`)。`--json` 模式进度走 stderr,stdout 保持纯 JSON |
 | 2.4 | 运行归档与状态存储 | `.specprobe/runs/<timestamp-id>/` 存 report.json + 证据;SQLite(`rusqlite`)存运行索引、Issue 状态、审批记录。新增 `specprobe runs list / show / diff` |
 | 2.5 | 审批工作流落地 | `specprobe issues list / show <ID> / accept\|reject\|ignore <ID> [--note]`,状态持久化。引入 Issue 指纹(类别 + 需求 ID + 关键证据 hash):重跑不重复报同指纹问题,被 ignore 的不再出现。这是"平台"与"一次性脚本"的分水岭 |
-| 2.6 | HTML 报告 | `specprobe report --open`:单文件自包含 HTML(`minijinja` 模板 + base64 内联截图),含摘要卡片、按严重度排列的 Issue 列表、可展开证据链与截图、执行时间线。演示性价比最高,可随时提前插队 |
+| 2.6 | HTML 报告 ✅ 已完成(2026-07-08,插队优先) | `review --html <PATH>` 输出单文件自包含 HTML(`minijinja` 模板 + base64 内联截图,light/dark 自适应),含摘要卡片、问题、AI 诊断(源码定位)、交互场景(带截图)、需求、证据。真机验证 3.9MB 报告 12 张截图内联可显示。配套报告质量优化:网络失败去重计数、有场景时跳过冗余笼统问题 |
 | 2.7 | 跨平台 | CI 已保证 Linux 编译;补 macOS/Linux 冒烟;PowerShell 脚本的功能收编进主程序或提供 bash 等价物 |
 
 **验收门**:新用户在一个陌生 Web 项目上,从 `specprobe init` 到拿到 HTML 报告 ≤ 3 条命令、≤ 5 分钟,全程无需查文档。

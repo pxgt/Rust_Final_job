@@ -15,7 +15,7 @@ SpecProbe 是一个使用 Rust 开发的、面向 AI 辅助开发项目的智能
 - `specprobe launch <PATH>`:识别 Node/Rust/Python 项目启动命令,受控运行并采集 stdout、stderr、退出码和耗时。
 - `specprobe browser <PATH>`:把测试计划转换为浏览器动作计划并执行。装了 Playwright runner 时用真实浏览器打开页面,采集截图、console 错误、网络失败和可交互元素摘要,证据归档到 `.specprobe/runs/`;未装时自动降级为 `http`/`https` 页面探测(状态码、标题、正文摘要,支持重定向)。
 - `specprobe setup-browser`:一键安装 Playwright runner(`npm install` + `npx playwright install chromium`,需要 Node.js)。
-- `specprobe review <PATH>`:汇总需求质量、项目启动和浏览器证据,生成带审批状态的问题清单。`--execute` 时用托管生命周期编排:自动启动被测服务→探测就绪→运行浏览器→优雅关停(进程树 kill);`--provider` 非 Mock 时对运行期失败叠加带源码定位与置信度的 LLM 深度诊断。
+- `specprobe review <PATH>`:汇总需求质量、项目启动和浏览器证据,生成带审批状态的问题清单。`--execute` 时用托管生命周期编排:自动启动被测服务→探测就绪→运行浏览器→优雅关停(进程树 kill);`--provider` 非 Mock 时对运行期失败叠加带源码定位与置信度的 LLM 深度诊断;`--html <PATH>` 额外输出可视化 HTML 报告(内联截图、light/dark 自适应)。
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 
