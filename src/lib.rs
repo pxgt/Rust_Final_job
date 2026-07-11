@@ -23,10 +23,39 @@ pub mod ui;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::{Cli, Command, RunsAction};
+use crate::cli::{Cli, Command, IssuesAction, RunsAction};
 
 fn cache_dir_unless(no_cache: bool) -> Option<std::path::PathBuf> {
     (!no_cache).then(|| std::path::PathBuf::from(".specprobe").join("cache"))
+}
+
+/// 解析审批命令作用的 run:显式 `--run` 或最近一次运行。无运行则报错。
+fn resolve_run(store: &storage::Store, run: Option<String>) -> Result<String> {
+    match run {
+        Some(id) => Ok(id),
+        None => store
+            .latest_run_id()?
+            .ok_or_else(|| anyhow::anyhow!("no archived runs; run `specprobe check` first")),
+    }
+}
+
+/// 设置某 issue 的审批状态(按指纹持久化,影响所有 run 的同指纹问题)。
+fn set_issue_approval(
+    store: &storage::Store,
+    run: Option<String>,
+    issue_id: &str,
+    state: &str,
+    note: Option<String>,
+) -> Result<()> {
+    let run_id = resolve_run(store, run)?;
+    match store.issue_fingerprint_of(&run_id, issue_id)? {
+        Some(fingerprint) => {
+            store.set_approval(&fingerprint, state, note.as_deref())?;
+            println!("Issue {issue_id} marked {state} (fingerprint {fingerprint}).");
+        }
+        None => println!("Issue {issue_id} was not found in run {run_id}."),
+    }
+    Ok(())
 }
 
 /// 归档一次运行到本地 store,失败仅告警不阻断(存储是尽力而为的附加能力)。
@@ -130,6 +159,44 @@ pub async fn run() -> Result<()> {
                     };
                     output::print_run_show(&id, run.as_ref(), &issues, json)?;
                 }
+            }
+        }
+        Command::Issues { action } => {
+            let store = storage::open(&std::path::PathBuf::from(".specprobe"))?;
+            match action {
+                IssuesAction::List { run, all, json } => {
+                    let run_id = resolve_run(&store, run)?;
+                    let mut issues = store.run_issues(&run_id)?;
+                    if !all {
+                        issues.retain(|issue| issue.approval != "ignored");
+                    }
+                    output::print_issues_list(&run_id, &issues, json)?;
+                }
+                IssuesAction::Show {
+                    issue_id,
+                    run,
+                    json,
+                } => {
+                    let run_id = resolve_run(&store, run)?;
+                    let issues = store.run_issues(&run_id)?;
+                    let issue = issues.iter().find(|issue| issue.issue_id == issue_id);
+                    output::print_issue_show(&issue_id, &run_id, issue, json)?;
+                }
+                IssuesAction::Accept {
+                    issue_id,
+                    run,
+                    note,
+                } => set_issue_approval(&store, run, &issue_id, "accepted", note)?,
+                IssuesAction::Reject {
+                    issue_id,
+                    run,
+                    note,
+                } => set_issue_approval(&store, run, &issue_id, "rejected", note)?,
+                IssuesAction::Ignore {
+                    issue_id,
+                    run,
+                    note,
+                } => set_issue_approval(&store, run, &issue_id, "ignored", note)?,
             }
         }
         Command::Doctor { json } => {

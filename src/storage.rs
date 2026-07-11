@@ -12,8 +12,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::review::ReviewReport;
@@ -76,12 +79,20 @@ pub fn open(base_dir: &Path) -> Result<Store, StoreError> {
         CREATE TABLE IF NOT EXISTS issues (
             run_id      TEXT NOT NULL,
             issue_id    TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
             severity    TEXT NOT NULL,
             category    TEXT NOT NULL,
             title       TEXT NOT NULL,
             requirement TEXT,
             approval    TEXT NOT NULL,
             PRIMARY KEY (run_id, issue_id)
+        );
+        -- 审批决定按 Issue 指纹跨 run 持久,新运行的同指纹问题继承其状态。
+        CREATE TABLE IF NOT EXISTS approvals (
+            fingerprint   TEXT PRIMARY KEY,
+            state         TEXT NOT NULL,
+            note          TEXT,
+            updated_at_ms INTEGER NOT NULL
         );",
     )?;
     Ok(Store {
@@ -128,6 +139,9 @@ impl Store {
             report_path: report_path_str,
         };
 
+        // 先取已有审批决定(按指纹),供新 run 的同指纹问题继承。
+        let approvals = self.load_approvals()?;
+
         let transaction = self.conn.transaction()?;
         transaction.execute(
             "INSERT INTO runs
@@ -147,17 +161,28 @@ impl Store {
             ],
         )?;
         for issue in &report.issues {
+            let fingerprint = issue_fingerprint(
+                &issue.category.to_string(),
+                issue.related_requirement.as_deref(),
+                &issue.title,
+            );
+            // 继承已有审批;无历史决定则用报告的默认(pending)。
+            let approval = approvals
+                .get(&fingerprint)
+                .cloned()
+                .unwrap_or_else(|| issue.approval.to_string());
             transaction.execute(
-                "INSERT INTO issues (run_id, issue_id, severity, category, title, requirement, approval)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO issues (run_id, issue_id, fingerprint, severity, category, title, requirement, approval)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     summary.id,
                     issue.id,
+                    fingerprint,
                     issue.severity.to_string(),
                     issue.category.to_string(),
                     issue.title,
                     issue.related_requirement,
-                    issue.approval.to_string(),
+                    approval,
                 ],
             )?;
         }
@@ -190,29 +215,105 @@ impl Store {
         }
     }
 
-    /// 某次运行归档的 Issue(id、严重度、标题、审批状态)。
+    /// 某次运行归档的 Issue。
     pub fn run_issues(&self, run_id: &str) -> Result<Vec<StoredIssue>, StoreError> {
         let mut statement = self.conn.prepare(
-            "SELECT issue_id, severity, category, title, requirement, approval
+            "SELECT issue_id, fingerprint, severity, category, title, requirement, approval
              FROM issues WHERE run_id = ?1 ORDER BY issue_id",
         )?;
         let rows = statement.query_map([run_id], |row| {
             Ok(StoredIssue {
                 issue_id: row.get(0)?,
-                severity: row.get(1)?,
-                category: row.get(2)?,
-                title: row.get(3)?,
-                requirement: row.get(4)?,
-                approval: row.get(5)?,
+                fingerprint: row.get(1)?,
+                severity: row.get(2)?,
+                category: row.get(3)?,
+                title: row.get(4)?,
+                requirement: row.get(5)?,
+                approval: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
+
+    /// 最近一次运行的 id;无运行返回 None。审批命令默认作用于它。
+    pub fn latest_run_id(&self) -> Result<Option<String>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT id FROM runs ORDER BY created_at_ms DESC LIMIT 1")?;
+        let mut rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 查某 run 内某 issue 的指纹(供审批命令按 ISSUE-ID 定位)。
+    pub fn issue_fingerprint_of(
+        &self,
+        run_id: &str,
+        issue_id: &str,
+    ) -> Result<Option<String>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT fingerprint FROM issues WHERE run_id = ?1 AND issue_id = ?2")?;
+        let mut rows = statement.query_map([run_id, issue_id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 设置某指纹的审批决定(upsert),并同步更新所有 run 中该指纹 issue 的 approval。
+    pub fn set_approval(
+        &self,
+        fingerprint: &str,
+        state: &str,
+        note: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO approvals (fingerprint, state, note, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(fingerprint) DO UPDATE SET state = ?2, note = ?3, updated_at_ms = ?4",
+            rusqlite::params![fingerprint, state, note, now_ms()],
+        )?;
+        self.conn.execute(
+            "UPDATE issues SET approval = ?2 WHERE fingerprint = ?1",
+            rusqlite::params![fingerprint, state],
+        )?;
+        Ok(())
+    }
+
+    fn load_approvals(&self) -> Result<HashMap<String, String>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT fingerprint, state FROM approvals")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+    }
+}
+
+/// Issue 指纹:类别 + 关联需求 + 标题的稳定 hash,用于跨 run 识别"同一个问题"。
+pub fn issue_fingerprint(category: &str, requirement: Option<&str>, title: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(category.as_bytes());
+    hasher.update(b"|");
+    hasher.update(requirement.unwrap_or("").as_bytes());
+    hasher.update(b"|");
+    hasher.update(title.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StoredIssue {
     pub issue_id: String,
+    pub fingerprint: String,
     pub severity: String,
     pub category: String,
     pub title: String,
@@ -322,6 +423,42 @@ mod tests {
         assert_eq!(runs[0].id, second.id, "newest first");
 
         drop(store); // 关闭 SQLite 连接,Windows 才能删除 db 文件
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn approval_persists_across_runs_by_fingerprint() {
+        let root = temp_project("specprobe-approval");
+        let report = sample_report(&root).await;
+        let mut store = open(&root.join(".specprobe")).expect("open store");
+
+        let first = store
+            .record_run("proj", "http://x", false, &report)
+            .expect("first run");
+        let issues = store.run_issues(&first.id).expect("issues");
+        let fingerprint = issues[0].fingerprint.clone();
+        assert_eq!(issues[0].approval, "pending");
+
+        // 审批一次;set_approval 同步更新已归档 issue。
+        store
+            .set_approval(&fingerprint, "accepted", Some("acceptable"))
+            .expect("approve");
+        let after = store.run_issues(&first.id).expect("issues after");
+        assert_eq!(after[0].approval, "accepted");
+
+        // 重跑:新 run 的同指纹问题继承 accepted,不再回到 pending。
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = store
+            .record_run("proj", "http://x", false, &report)
+            .expect("second run");
+        let issues2 = store.run_issues(&second.id).expect("issues2");
+        let same = issues2
+            .iter()
+            .find(|issue| issue.fingerprint == fingerprint)
+            .expect("same fingerprint present");
+        assert_eq!(same.approval, "accepted");
+
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

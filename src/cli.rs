@@ -16,6 +16,57 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum IssuesAction {
+    /// List a run's issues with their approval state (hides ignored unless --all).
+    List {
+        /// Run id (defaults to the latest run).
+        #[arg(long)]
+        run: Option<String>,
+        /// Include ignored issues.
+        #[arg(long)]
+        all: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one issue's details from an archived run.
+    Show {
+        /// Issue id (e.g. ISSUE-001).
+        issue_id: String,
+        /// Run id (defaults to the latest run).
+        #[arg(long)]
+        run: Option<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Accept an issue (persisted by fingerprint across runs).
+    Accept {
+        issue_id: String,
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Reject an issue.
+    Reject {
+        issue_id: String,
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Ignore an issue (future runs hide it unless --all).
+    Ignore {
+        issue_id: String,
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum RunsAction {
     /// List recent archived runs.
     List {
@@ -90,6 +141,11 @@ pub enum Command {
     Runs {
         #[command(subcommand)]
         action: RunsAction,
+    },
+    /// Review and set approval state for issues from archived runs.
+    Issues {
+        #[command(subcommand)]
+        action: IssuesAction,
     },
     /// Check whether the local machine is ready for analysis and web testing.
     Doctor {

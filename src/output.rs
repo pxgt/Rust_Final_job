@@ -84,6 +84,57 @@ pub fn print_run_show(
     Ok(())
 }
 
+pub fn print_issues_list(run_id: &str, issues: &[StoredIssue], json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(issues)?);
+        return Ok(());
+    }
+    println!("Issues for run {run_id}");
+    if issues.is_empty() {
+        println!("(no issues to show)");
+        return Ok(());
+    }
+    for issue in issues {
+        let requirement = issue
+            .requirement
+            .as_ref()
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default();
+        println!(
+            "- {} [{} / {}]{} {}",
+            issue.issue_id, issue.severity, issue.approval, requirement, issue.title
+        );
+    }
+    println!("\nUse `specprobe issues accept|reject|ignore <ISSUE-ID>` to set approval.");
+    Ok(())
+}
+
+pub fn print_issue_show(
+    issue_id: &str,
+    run_id: &str,
+    issue: Option<&StoredIssue>,
+    json: bool,
+) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&issue)?);
+        return Ok(());
+    }
+    let Some(issue) = issue else {
+        println!("Issue '{issue_id}' was not found in run {run_id}.");
+        return Ok(());
+    };
+    println!("{} ({})", issue.issue_id, run_id);
+    println!("Title: {}", issue.title);
+    println!("Severity: {}", issue.severity);
+    println!("Category: {}", issue.category);
+    if let Some(requirement) = &issue.requirement {
+        println!("Requirement: {requirement}");
+    }
+    println!("Approval: {}", issue.approval);
+    println!("Fingerprint: {}", issue.fingerprint);
+    Ok(())
+}
+
 pub fn print_check_report(report: &CheckReport, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);

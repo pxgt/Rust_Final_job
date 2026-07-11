@@ -146,7 +146,7 @@
 | 2.2 | 配置文件 `specprobe.toml` ✅ 已完成(2026-07-10) | 项目根 `specprobe.toml`:base_url、provider、requirements、超时、no_cache。`specprobe init` 生成模板(拒绝覆盖,`--force` 强制)。优先级 **CLI 显式参数 > 环境变量(`SPECPROBE_BASE_URL`/`SPECPROBE_PROVIDER`)> 项目配置 > 默认**,逐字段合并;未知字段/非法 provider 显式报错。`check` 已接入。**遗留**:用户级 `~/.config/specprobe/config.toml`、启动命令覆盖与就绪探测配置(属 runtime 管道) |
 | 2.3 | 终端体验 ✅ 已完成(2026-07-10) | `indicatif` 阶段 spinner(scan / 精解析 / 起服务就绪 / 浏览器 / 诊断),消除长静默。进度走 stderr、非 TTY(管道/CI/重定向)自动静默、`--json` 显式禁用,stdout 保持纯 JSON。核心逻辑经 `&(dyn Fn(&str)+Sync)` 阶段回调解耦(review/check 加 `_with_progress` 变体,旧 API 向后兼容)。**遗留**:彩色分级输出与 `miette` 错误建议 |
 | 2.4 | 运行归档与状态存储 ✅ 已完成(2026-07-10) | 每次 check/review 归档 report.json 到 `.specprobe/runs/<run-id>/`;SQLite(`rusqlite` bundled)`.specprobe/specprobe.db` 存 runs 索引与 issues(含 approval 列,为 2.5 预留)。新增 `runs list` / `runs show <id>`(`--json` 支持),`--no-store` 关闭归档。存储与核心逻辑解耦(CLI 层归档,失败仅告警)。**遗留**:`runs diff`(修复前后对比) |
-| 2.5 | 审批工作流落地 | `specprobe issues list / show <ID> / accept\|reject\|ignore <ID> [--note]`,状态持久化。引入 Issue 指纹(类别 + 需求 ID + 关键证据 hash):重跑不重复报同指纹问题,被 ignore 的不再出现。这是"平台"与"一次性脚本"的分水岭 |
+| 2.5 | 审批工作流落地 ✅ 已完成(2026-07-10) | `issues list / show <ID> / accept\|reject\|ignore <ID> [--note]`(`--run` 指定运行、默认最近,`--json` 支持)。**Issue 指纹**(类别+需求+标题 SHA-256)使审批按指纹跨 run 持久:重跑时同指纹问题**继承**审批状态(不回到 pending),`issues list` 默认隐藏 ignored(`--all` 显示)。真机验证 accept/ignore → 重跑继承。这是"平台"与"一次性脚本"的分水岭 |
 | 2.6 | HTML 报告 ✅ 已完成(2026-07-08,插队优先) | `review --html <PATH>` 输出单文件自包含 HTML(`minijinja` 模板 + base64 内联截图,light/dark 自适应),含摘要卡片、问题、AI 诊断(源码定位)、交互场景(带截图)、需求、证据。真机验证 3.9MB 报告 12 张截图内联可显示。配套报告质量优化:网络失败去重计数、有场景时跳过冗余笼统问题 |
 | 2.7 | 跨平台 | CI 已保证 Linux 编译;补 macOS/Linux 冒烟;PowerShell 脚本的功能收编进主程序或提供 bash 等价物 |
 
