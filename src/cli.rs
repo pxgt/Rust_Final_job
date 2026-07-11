@@ -16,6 +16,27 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum RunsAction {
+    /// List recent archived runs.
+    List {
+        /// Maximum number of runs to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one archived run and its issues.
+    Show {
+        /// Run id (from `runs list`).
+        id: String,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum Command {
     /// One-shot inspection: scan, refine requirements, run the app and browser, report.
     Check {
@@ -43,6 +64,9 @@ pub enum Command {
         /// Skip writing the HTML report.
         #[arg(long)]
         no_html: bool,
+        /// Do not archive this run to the local run store (.specprobe/specprobe.db).
+        #[arg(long)]
+        no_store: bool,
         /// Maximum launch/readiness time in seconds (default 15).
         #[arg(long)]
         launch_timeout_secs: Option<u64>,
@@ -61,6 +85,11 @@ pub enum Command {
         /// Overwrite an existing specprobe.toml.
         #[arg(long)]
         force: bool,
+    },
+    /// Browse archived runs stored in .specprobe/specprobe.db.
+    Runs {
+        #[command(subcommand)]
+        action: RunsAction,
     },
     /// Check whether the local machine is ready for analysis and web testing.
     Doctor {
@@ -183,6 +212,9 @@ pub enum Command {
         /// Also write a self-contained HTML report to this path.
         #[arg(long, value_name = "PATH")]
         html: Option<PathBuf>,
+        /// Do not archive this run to the local run store (.specprobe/specprobe.db).
+        #[arg(long)]
+        no_store: bool,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,

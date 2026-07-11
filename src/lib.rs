@@ -15,6 +15,7 @@ pub mod review;
 pub mod runtime;
 pub mod scanner;
 pub mod scenario;
+pub mod storage;
 #[cfg(test)]
 pub(crate) mod testutil;
 pub mod ui;
@@ -22,10 +23,21 @@ pub mod ui;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, RunsAction};
 
 fn cache_dir_unless(no_cache: bool) -> Option<std::path::PathBuf> {
     (!no_cache).then(|| std::path::PathBuf::from(".specprobe").join("cache"))
+}
+
+/// 归档一次运行到本地 store,失败仅告警不阻断(存储是尽力而为的附加能力)。
+fn archive_run(project_root: &str, base_url: &str, executed: bool, review: &review::ReviewReport) {
+    let base_dir = std::path::PathBuf::from(".specprobe");
+    match storage::open(&base_dir)
+        .and_then(|mut store| store.record_run(project_root, base_url, executed, review))
+    {
+        Ok(summary) => eprintln!("Run archived as {} ({})", summary.id, summary.report_path),
+        Err(error) => eprintln!("Warning: failed to archive run: {error}"),
+    }
 }
 
 pub async fn run() -> Result<()> {
@@ -41,6 +53,7 @@ pub async fn run() -> Result<()> {
             yes,
             html,
             no_html,
+            no_store,
             launch_timeout_secs,
             browser_timeout_secs,
             json,
@@ -88,11 +101,36 @@ pub async fn run() -> Result<()> {
                 report::write_review_html(&report.review, &html)?;
                 eprintln!("HTML report written to {}", html.display());
             }
+            if !no_store {
+                archive_run(
+                    &report.review.config.project_root,
+                    &report.review.config.base_url,
+                    report.executed,
+                    &report.review,
+                );
+            }
             output::print_check_report(&report, json)?;
         }
         Command::Init { path, force } => {
             let target = config::write_template(&path, force)?;
             println!("Wrote configuration template to {}", target.display());
+        }
+        Command::Runs { action } => {
+            let store = storage::open(&std::path::PathBuf::from(".specprobe"))?;
+            match action {
+                RunsAction::List { limit, json } => {
+                    let runs = store.list_runs(limit)?;
+                    output::print_runs_list(&runs, json)?;
+                }
+                RunsAction::Show { id, json } => {
+                    let run = store.get_run(&id)?;
+                    let issues = match &run {
+                        Some(summary) => store.run_issues(&summary.id)?,
+                        None => Vec::new(),
+                    };
+                    output::print_run_show(&id, run.as_ref(), &issues, json)?;
+                }
+            }
         }
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();
@@ -189,6 +227,7 @@ pub async fn run() -> Result<()> {
             launch_timeout_secs,
             browser_timeout_secs,
             html,
+            no_store,
             json,
         } => {
             let progress = ui::Progress::spinner(!json);
@@ -213,6 +252,14 @@ pub async fn run() -> Result<()> {
             if let Some(html_path) = html {
                 report::write_review_html(&report, &html_path)?;
                 eprintln!("HTML report written to {}", html_path.display());
+            }
+            if !no_store {
+                archive_run(
+                    &report.config.project_root,
+                    &report.config.base_url,
+                    report.config.execute,
+                    &report,
+                );
             }
             output::print_review_report(&report, json)?;
         }

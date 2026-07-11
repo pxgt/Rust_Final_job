@@ -9,6 +9,80 @@ use crate::requirements::RequirementReport;
 use crate::review::ReviewReport;
 use crate::runtime::LaunchReport;
 use crate::scanner::ProjectProfile;
+use crate::storage::{RunSummary, StoredIssue};
+
+pub fn print_runs_list(runs: &[RunSummary], json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(runs)?);
+        return Ok(());
+    }
+    if runs.is_empty() {
+        println!("No archived runs. Run `specprobe check` or `review` first.");
+        return Ok(());
+    }
+    println!("Archived runs");
+    println!("-------------");
+    for run in runs {
+        println!(
+            "{}  {}  engine={}  executed={}  reqs={}  issues={} (high={})",
+            run.id,
+            run.project_root,
+            run.engine,
+            yes_no(run.executed),
+            run.requirements,
+            run.issues,
+            run.high
+        );
+    }
+    Ok(())
+}
+
+pub fn print_run_show(
+    id: &str,
+    run: Option<&RunSummary>,
+    issues: &[StoredIssue],
+    json: bool,
+) -> Result<()> {
+    if json {
+        let value = serde_json::json!({ "run": run, "issues": issues });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    let Some(run) = run else {
+        println!("Run '{id}' was not found. Use `specprobe runs list`.");
+        return Ok(());
+    };
+    println!("Run {}", run.id);
+    println!("----{}", "-".repeat(run.id.len()));
+    println!("Project: {}", run.project_root);
+    println!("Base URL: {}", run.base_url);
+    println!("Engine: {}, executed: {}", run.engine, yes_no(run.executed));
+    println!(
+        "Requirements: {}, issues: {} (high: {})",
+        run.requirements, run.issues, run.high
+    );
+    println!("Report: {}", run.report_path);
+    if !issues.is_empty() {
+        println!("\nIssues");
+        for issue in issues {
+            let requirement = issue
+                .requirement
+                .as_ref()
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            println!(
+                "- {} [{} / {} / {}]{} {}",
+                issue.issue_id,
+                issue.severity,
+                issue.category,
+                issue.approval,
+                requirement,
+                issue.title
+            );
+        }
+    }
+    Ok(())
+}
 
 pub fn print_check_report(report: &CheckReport, json: bool) -> Result<()> {
     if json {

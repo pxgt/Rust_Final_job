@@ -113,6 +113,7 @@ fn review_plan_only_reports_pending_issues() {
         &project_path("tests/fixtures/demo-prd.md"),
         "--project",
         &project_path("demo/buggy-task-board"),
+        "--no-store",
         "--json",
     ]);
 
@@ -131,6 +132,7 @@ fn check_declines_execution_without_confirmation() {
         "check",
         &project_path("demo/buggy-task-board"),
         "--no-html",
+        "--no-store",
         "--json",
     ]);
 
