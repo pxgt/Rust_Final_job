@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::ai::AiProviderKind;
-use crate::review::{ReviewError, ReviewOptions, ReviewReport, generate_review_report};
+use crate::review::{ReviewError, ReviewOptions, ReviewReport, generate_review_report_with};
 use crate::runtime::launch_project;
 use crate::scanner::{ProjectProfile, scan_project};
 
@@ -45,17 +45,30 @@ pub enum CheckError {
     Review(#[from] ReviewError),
 }
 
-/// 交互式入口:确认走真实终端(stderr 提问 + stdin 读答复)。
-pub async fn run_check(options: CheckOptions) -> Result<CheckReport, CheckError> {
-    run_check_with(options, prompt_on_terminal).await
+/// 交互式入口:确认走真实终端(stderr 提问 + stdin 读答复),`progress` 报告阶段。
+pub async fn run_check(
+    options: CheckOptions,
+    progress: &(dyn Fn(&str) + Sync),
+) -> Result<CheckReport, CheckError> {
+    run_check_with_progress(options, prompt_on_terminal, progress).await
 }
 
-/// 可注入确认回调的实现,便于测试。回调收到"将要执行的启动命令"描述,
-/// 返回 true 表示允许执行。
+/// 可注入确认回调的实现(无进度),便于测试。
 pub async fn run_check_with(
     options: CheckOptions,
     confirm: impl Fn(&str) -> bool,
 ) -> Result<CheckReport, CheckError> {
+    run_check_with_progress(options, confirm, &|_| {}).await
+}
+
+/// 确认回调与进度回调均可注入的完整实现。确认回调收到"将要执行的启动命令"描述,
+/// 返回 true 表示允许执行。
+pub async fn run_check_with_progress(
+    options: CheckOptions,
+    confirm: impl Fn(&str) -> bool,
+    progress: &(dyn Fn(&str) + Sync),
+) -> Result<CheckReport, CheckError> {
+    progress("Scanning project…");
     let profile = scan_project(&options.path)?;
     let executed = should_execute(&options, &confirm).await;
 
@@ -63,7 +76,7 @@ pub async fn run_check_with(
         .requirements
         .clone()
         .unwrap_or_else(|| options.path.clone());
-    let review = generate_review_report(
+    let review = generate_review_report_with(
         &requirements_path,
         ReviewOptions {
             project_path: options.path.clone(),
@@ -76,6 +89,7 @@ pub async fn run_check_with(
             launch_timeout_secs: options.launch_timeout_secs,
             browser_timeout_secs: options.browser_timeout_secs,
         },
+        progress,
     )
     .await?;
 

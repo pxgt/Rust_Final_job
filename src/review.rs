@@ -223,6 +223,16 @@ pub async fn generate_review_report(
     requirements_path: &Path,
     options: ReviewOptions,
 ) -> Result<ReviewReport, ReviewError> {
+    generate_review_report_with(requirements_path, options, &|_| {}).await
+}
+
+/// 带阶段进度回调的版本。`progress` 在各长阶段边界收到简短文本(供 spinner 显示)。
+pub async fn generate_review_report_with(
+    requirements_path: &Path,
+    options: ReviewOptions,
+    progress: &(dyn Fn(&str) + Sync),
+) -> Result<ReviewReport, ReviewError> {
+    progress("Analyzing requirements…");
     let requirement_report = analyze_requirements_with_refinement(
         requirements_path,
         RefineOptions {
@@ -250,7 +260,7 @@ pub async fn generate_review_report(
     let orchestrate = options.execute && !options.skip_launch && !options.skip_browser;
 
     let (launch_report, browser_report) = if orchestrate {
-        run_orchestrated(&mut builder, requirements_path, &options).await
+        run_orchestrated(&mut builder, requirements_path, &options, progress).await
     } else {
         let launch_report = if options.skip_launch {
             builder.add_evidence(
@@ -316,6 +326,7 @@ pub async fn generate_review_report(
     let diagnoses = if matches!(options.provider, AiProviderKind::Mock) || findings.is_empty() {
         Vec::new()
     } else {
+        progress("Diagnosing failures…");
         match generate_diagnoses(
             &findings,
             &options.project_path,
@@ -375,6 +386,7 @@ async fn run_orchestrated(
     builder: &mut ReviewBuilder,
     requirements_path: &Path,
     options: &ReviewOptions,
+    progress: &(dyn Fn(&str) + Sync),
 ) -> (Option<LaunchReport>, Option<BrowserRunReport>) {
     let browser_options = BrowserOptions {
         provider: options.provider,
@@ -382,8 +394,10 @@ async fn run_orchestrated(
     };
     match start_app(&options.project_path).await {
         Ok(mut app) => {
+            progress("Starting service, waiting until ready…");
             app.wait_until_ready(Some(&options.base_url), options.launch_timeout_secs)
                 .await;
+            progress("Running browser tests…");
             let browser = run_browser_plan(
                 requirements_path,
                 &options.base_url,
@@ -399,6 +413,7 @@ async fn run_orchestrated(
         }
         Err(error) => {
             let launch = collect_launch_evidence(builder, Err(error));
+            progress("Running browser tests…");
             let browser = run_browser_plan(
                 requirements_path,
                 &options.base_url,

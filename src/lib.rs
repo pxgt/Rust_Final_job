@@ -17,6 +17,7 @@ pub mod scanner;
 pub mod scenario;
 #[cfg(test)]
 pub(crate) mod testutil;
+pub mod ui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -61,17 +62,23 @@ pub async fn run() -> Result<()> {
                 config::EnvOverrides::from_process_env(),
                 loaded.as_ref(),
             )?;
-            let report = check::run_check(check::CheckOptions {
-                path,
-                requirements: settings.requirements,
-                base_url: settings.base_url,
-                provider: settings.provider,
-                cache_dir: cache_dir_unless(settings.no_cache),
-                assume_yes: yes,
-                launch_timeout_secs: settings.launch_timeout_secs,
-                browser_timeout_secs: settings.browser_timeout_secs,
-            })
+            let progress = ui::Progress::spinner(!json);
+            let stage = progress.stage_fn();
+            let report = check::run_check(
+                check::CheckOptions {
+                    path,
+                    requirements: settings.requirements,
+                    base_url: settings.base_url,
+                    provider: settings.provider,
+                    cache_dir: cache_dir_unless(settings.no_cache),
+                    assume_yes: yes,
+                    launch_timeout_secs: settings.launch_timeout_secs,
+                    browser_timeout_secs: settings.browser_timeout_secs,
+                },
+                &stage,
+            )
             .await?;
+            progress.finish();
             if !no_html {
                 if let Some(parent) = html.parent()
                     && !parent.as_os_str().is_empty()
@@ -184,7 +191,9 @@ pub async fn run() -> Result<()> {
             html,
             json,
         } => {
-            let report = review::generate_review_report(
+            let progress = ui::Progress::spinner(!json);
+            let stage = progress.stage_fn();
+            let report = review::generate_review_report_with(
                 &path,
                 review::ReviewOptions {
                     project_path: project,
@@ -197,8 +206,10 @@ pub async fn run() -> Result<()> {
                     launch_timeout_secs,
                     browser_timeout_secs,
                 },
+                &stage,
             )
             .await?;
+            progress.finish();
             if let Some(html_path) = html {
                 report::write_review_html(&report, &html_path)?;
                 eprintln!("HTML report written to {}", html_path.display());
