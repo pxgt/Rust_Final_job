@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::ai::AiAnalysisReport;
+use crate::apply::ApplyOutcome;
 use crate::browser::BrowserRunReport;
 use crate::check::CheckReport;
 use crate::doctor::DoctorReport;
@@ -152,7 +153,24 @@ pub fn print_patch(patch: &GeneratedPatch, json: bool) -> Result<()> {
         println!();
     }
     println!(
-        "\nReview the diff above. Applying patches to a branch is not yet automated (ROADMAP 3.2)."
+        "\nReview the diff above. Re-run with --apply to commit it to an isolated branch (specprobe/fix-<issue>)."
+    );
+    Ok(())
+}
+
+pub fn print_apply_outcome(outcome: &ApplyOutcome, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(outcome)?);
+        return Ok(());
+    }
+    println!(
+        "\nApplied patch on branch {} (commit {}); restored to {}.",
+        outcome.branch, outcome.commit, outcome.restored_branch
+    );
+    println!("Changed files: {}", outcome.files.join(", "));
+    println!(
+        "Review it with `git diff {}..{}`, then merge or delete the branch.",
+        outcome.restored_branch, outcome.branch
     );
     Ok(())
 }

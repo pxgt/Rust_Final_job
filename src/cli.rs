@@ -160,6 +160,12 @@ pub enum Command {
         /// Disable the on-disk AI response cache (.specprobe/cache).
         #[arg(long)]
         no_cache: bool,
+        /// After showing the patch, apply it to an isolated branch specprobe/fix-<issue> (asks for confirmation).
+        #[arg(long)]
+        apply: bool,
+        /// Allow applying even if the project's git working tree is not clean.
+        #[arg(long)]
+        allow_dirty: bool,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,

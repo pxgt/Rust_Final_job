@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod apply;
 pub mod browser;
 pub mod check;
 pub mod cli;
@@ -28,6 +29,18 @@ use crate::cli::{Cli, Command, IssuesAction, RunsAction};
 
 fn cache_dir_unless(no_cache: bool) -> Option<std::path::PathBuf> {
     (!no_cache).then(|| std::path::PathBuf::from(".specprobe").join("cache"))
+}
+
+/// 真实终端确认:stderr 提问,stdin 读一行;非 TTY / EOF / 非 y 一律拒绝。
+fn confirm_on_terminal(message: &str) -> bool {
+    use std::io::{BufRead, Write, stderr, stdin};
+    eprint!("{message} Apply? [y/N] ");
+    let _ = stderr().flush();
+    let mut line = String::new();
+    if stdin().lock().read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 /// 解析审批命令作用的 run:显式 `--run` 或最近一次运行。无运行则报错。
@@ -270,6 +283,8 @@ pub async fn run() -> Result<()> {
             run,
             provider,
             no_cache,
+            apply,
+            allow_dirty,
             json,
         } => {
             let store = storage::open(&std::path::PathBuf::from(".specprobe"))?;
@@ -283,15 +298,33 @@ pub async fn run() -> Result<()> {
             let project_root = report
                 .pointer("/config/project_root")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("run report is missing config.project_root"))?;
+                .ok_or_else(|| anyhow::anyhow!("run report is missing config.project_root"))?
+                .to_owned();
             let generated = patch::generate_patch(
                 &input,
-                std::path::Path::new(project_root),
+                std::path::Path::new(&project_root),
                 provider,
                 cache_dir_unless(no_cache),
             )
             .await?;
             output::print_patch(&generated, json)?;
+
+            if apply {
+                let branch = format!("specprobe/fix-{}", generated.issue_id.to_ascii_lowercase());
+                let message = format!(
+                    "About to apply this patch to a new branch {branch} in {project_root} (your current branch is left untouched)."
+                );
+                if confirm_on_terminal(&message) {
+                    let outcome = apply::apply_patch(
+                        std::path::Path::new(&project_root),
+                        &generated,
+                        &apply::ApplyOptions { allow_dirty },
+                    )?;
+                    output::print_apply_outcome(&outcome, json)?;
+                } else {
+                    eprintln!("Aborted; patch was not applied.");
+                }
+            }
         }
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();
