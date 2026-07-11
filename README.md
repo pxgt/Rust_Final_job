@@ -35,27 +35,29 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 
 Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)进行中:一键 `check` 与 HTML 报告已完成。
 
-尚未实现:配置文件(`specprobe.toml`)、进度条、运行归档索引与审批状态持久化(Issue 审批恒为 pending)、补丁自动应用(提案只生成预览,不修改用户代码)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。
+Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。尚未实现:补丁自动应用(提案只生成预览,不修改用户代码,属 Phase 3)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
 
 ## 本地运行
 
-标准环境直接使用 Cargo;本开发机的 Visual Studio 未注册 vswhere,需要通过包装脚本加载 MSVC 环境:
+Linux / macOS 直接用 Cargo:
+
+```bash
+cargo build
+cargo run -- check ./你的Web项目 --base-url http://127.0.0.1:3000
+cargo test
+```
+
+Windows 上,若 Visual Studio 未被 vswhere 正确注册(本开发机情况),用包装脚本加载 MSVC 环境后再执行 Cargo:
 
 ```powershell
-.\scripts\cargo-msvc.ps1 run -- doctor
-.\scripts\cargo-msvc.ps1 run -- scan .
-.\scripts\cargo-msvc.ps1 run -- requirements .\docs\specprobe-requirements.md
-.\scripts\cargo-msvc.ps1 run -- ai .\docs\specprobe-requirements.md
-.\scripts\cargo-msvc.ps1 run -- launch . --dry-run
-.\scripts\cargo-msvc.ps1 run -- browser .\docs\specprobe-requirements.md --dry-run
-.\scripts\cargo-msvc.ps1 run -- review .\docs\specprobe-requirements.md
-.\scripts\cargo-msvc.ps1 run -- propose .\docs\specprobe-requirements.md
-.\scripts\run-demo.ps1
+.\scripts\cargo-msvc.ps1 run -- check .\你的Web项目
 .\scripts\cargo-msvc.ps1 test
 .\scripts\cargo-msvc.ps1 --% clippy --all-targets -- -D warnings
 ```
 
-`review` 和 `propose` 默认进行计划级审查,不主动执行被测项目;需要真实启动和页面探测时添加 `--execute`。
+(MSVC 环境正常的 Windows 机器可直接用 `cargo`,不需要脚本。)
+
+`review` 和 `propose` 默认进行计划级审查,不主动执行被测项目;需要真实启动和页面探测时添加 `--execute`(`check` 会先交互确认启动命令)。
 
 ## AI Provider 配置
 

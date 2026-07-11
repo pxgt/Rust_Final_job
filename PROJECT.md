@@ -345,7 +345,7 @@ Phase 0 地基修复已于 2026-07-06 完成，验收门达成（CI ubuntu + win
 
 Phase 1（真实化)已全部完成并通过端到端真机验收：1.1-1.7 子阶段（2026-07-06 至 07-08）。**真机验收（2026-07-08,DeepSeek + Chromium）：FocusBoard 注入缺陷检出 4/5（基线 1/5),达到验收门数量目标,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。** Phase 1.8 三项质量调优机制已完成(否定断言原语、断言 selector 收敛、诊断防过度合并);剩余稳定性问题(LLM 场景生成波动)需执行级修复回路,列为 ROADMAP 1.8 遗留。
 
-用户选择走 Phase 2（易用性)。**已完成 2.6 HTML 报告**（插队优先,`review --html`)与 **2.1 一键 `check` 命令**（主入口,scan→精解析→编排执行→浏览器→诊断→HTML,启动命令交互确认安全边界)。**2.2 配置文件 `specprobe.toml`**（`init` 生成模板,优先级 CLI > 环境 > 配置 > 默认,check 已接入)。**2.3 终端体验**(indicatif 阶段 spinner,进度走 stderr、非 TTY/`--json` 自动静默)。**2.4 运行归档与 SQLite 存储**(每次运行归档 report.json + `.specprobe/specprobe.db` 索引,`runs list/show`)。**2.5 审批工作流**(`issues accept/reject/ignore`,审批按 Issue 指纹跨 run 持久继承)。Phase 2 剩余:2.7 跨平台。
+用户选择走 Phase 2（易用性)。**已完成 2.6 HTML 报告**（插队优先,`review --html`)与 **2.1 一键 `check` 命令**（主入口,scan→精解析→编排执行→浏览器→诊断→HTML,启动命令交互确认安全边界)。**2.2 配置文件 `specprobe.toml`**（`init` 生成模板,优先级 CLI > 环境 > 配置 > 默认,check 已接入)。**2.3 终端体验**(indicatif 阶段 spinner,进度走 stderr、非 TTY/`--json` 自动静默)。**2.4 运行归档与 SQLite 存储**(每次运行归档 report.json + `.specprobe/specprobe.db` 索引,`runs list/show`)。**2.5 审批工作流**(`issues accept/reject/ignore`,审批按 Issue 指纹跨 run 持久继承)、**2.7 跨平台**(CI 三平台矩阵 + lint/test 拆分)。**Phase 2 易用性全部完成。** 下一步 Phase 3(修复闭环:真补丁生成 + 安全应用 + 自动回归)或 Phase 1.8 遗留(场景执行级修复回路)。
 
 AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `OPENAI_MODEL`（`OPENAI_BASE_URL` 默认 api.openai.com/v1，DeepSeek 设为 `https://api.deepseek.com` + 模型 `deepseek-chat`）；Ollama 需要 `OLLAMA_MODEL`（`OLLAMA_BASE_URL` 默认 127.0.0.1:11434）；云端调用经代理时设置 `HTTPS_PROXY`。
 
@@ -364,6 +364,13 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 | 模型 API 不可用 | 演示中断 | Mock Provider、本地 Ollama、结果缓存 |
 
 ## 12. 开发日志
+
+### 2026-07-10（Phase 2.7 跨平台,Phase 2 收官）
+
+- CI 重构:拆为 `lint`(fmt + clippy,单平台 ubuntu,平台无关只跑一次)与 `test`(ubuntu / windows / **macos** 三平台矩阵冒烟)。新增 macOS 验证进程树 kill、路径处理、bundled SQLite 编译的平台差异。
+- 核心跨平台正确性早已由 `cfg(windows/unix)` 保证:runtime 进程组(unix)/ 一次性命令、playwright kill_tree(taskkill / kill -TERM 进程组)、doctor MSVC 探测(windows-only,unix 返回 not-found 不 panic)。macOS 走 unix 分支,无需新代码。
+- README:本地运行补 Linux/macOS 直接 `cargo` 路径,澄清 `cargo-msvc.ps1` 仅为本机 MSVC 未注册 vswhere 的 workaround;更新"当前状态"反映 Phase 2 完成。
+- **Phase 2(易用性)全部完成**:一键 check / specprobe.toml / 进度条 / 运行归档+SQLite / 审批持久化 / 跨平台。
 
 ### 2026-07-10（Phase 2.5 审批工作流）
 

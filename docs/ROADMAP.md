@@ -148,7 +148,7 @@
 | 2.4 | 运行归档与状态存储 ✅ 已完成(2026-07-10) | 每次 check/review 归档 report.json 到 `.specprobe/runs/<run-id>/`;SQLite(`rusqlite` bundled)`.specprobe/specprobe.db` 存 runs 索引与 issues(含 approval 列,为 2.5 预留)。新增 `runs list` / `runs show <id>`(`--json` 支持),`--no-store` 关闭归档。存储与核心逻辑解耦(CLI 层归档,失败仅告警)。**遗留**:`runs diff`(修复前后对比) |
 | 2.5 | 审批工作流落地 ✅ 已完成(2026-07-10) | `issues list / show <ID> / accept\|reject\|ignore <ID> [--note]`(`--run` 指定运行、默认最近,`--json` 支持)。**Issue 指纹**(类别+需求+标题 SHA-256)使审批按指纹跨 run 持久:重跑时同指纹问题**继承**审批状态(不回到 pending),`issues list` 默认隐藏 ignored(`--all` 显示)。真机验证 accept/ignore → 重跑继承。这是"平台"与"一次性脚本"的分水岭 |
 | 2.6 | HTML 报告 ✅ 已完成(2026-07-08,插队优先) | `review --html <PATH>` 输出单文件自包含 HTML(`minijinja` 模板 + base64 内联截图,light/dark 自适应),含摘要卡片、问题、AI 诊断(源码定位)、交互场景(带截图)、需求、证据。真机验证 3.9MB 报告 12 张截图内联可显示。配套报告质量优化:网络失败去重计数、有场景时跳过冗余笼统问题 |
-| 2.7 | 跨平台 | CI 已保证 Linux 编译;补 macOS/Linux 冒烟;PowerShell 脚本的功能收编进主程序或提供 bash 等价物 |
+| 2.7 | 跨平台 ✅ 已完成(2026-07-10) | CI 拆为 `lint`(fmt/clippy,单平台) + `test`(ubuntu/windows/**macos** 三平台矩阵冒烟),验证进程树 kill(taskkill / 进程组)、路径、bundled SQLite 的平台差异。核心早已用 `cfg(windows/unix)` 处理差异(macOS 走 unix 分支)。README 补 Linux/macOS 直接 `cargo` 说明。`cargo-msvc.ps1` 是本机 MSVC workaround(非产品功能),正常环境直接 cargo,不需跨平台等价物 |
 
 **验收门**:新用户在一个陌生 Web 项目上,从 `specprobe init` 到拿到 HTML 报告 ≤ 3 条命令、≤ 5 分钟,全程无需查文档。
 
