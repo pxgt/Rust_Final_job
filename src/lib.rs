@@ -6,6 +6,7 @@ pub mod config;
 pub mod diagnosis;
 pub mod doctor;
 pub mod output;
+pub mod patch;
 pub mod playwright;
 pub mod refine;
 pub mod remediation;
@@ -56,6 +57,71 @@ fn set_issue_approval(
         None => println!("Issue {issue_id} was not found in run {run_id}."),
     }
     Ok(())
+}
+
+/// 从归档的 report.json(以 Value 读取,避免为 ReviewReport 引入 Deserialize)
+/// 构造补丁生成输入:取 issue 的描述,并汇总关联诊断给出的源码定位文件。
+fn build_patch_input(report: &serde_json::Value, issue_id: &str) -> Result<patch::PatchInput> {
+    let issue = report
+        .get("issues")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|issues| {
+            issues
+                .iter()
+                .find(|entry| entry.get("id").and_then(serde_json::Value::as_str) == Some(issue_id))
+        })
+        .ok_or_else(|| anyhow::anyhow!("issue {issue_id} was not found in the run report"))?;
+
+    let field = |name: &str| {
+        issue
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+
+    // 汇总引用了该 issue 的诊断给出的源码文件(去重)。
+    let mut source_files: Vec<String> = Vec::new();
+    if let Some(diagnoses) = report
+        .get("diagnoses")
+        .and_then(serde_json::Value::as_array)
+    {
+        for diagnosis in diagnoses {
+            let refers = diagnosis
+                .get("related_issue_ids")
+                .and_then(serde_json::Value::as_array)
+                .map(|ids| ids.iter().any(|id| id.as_str() == Some(issue_id)))
+                .unwrap_or(false);
+            if !refers {
+                continue;
+            }
+            if let Some(locations) = diagnosis
+                .get("source_locations")
+                .and_then(serde_json::Value::as_array)
+            {
+                for location in locations {
+                    if let Some(file) = location.get("file").and_then(serde_json::Value::as_str)
+                        && !source_files.iter().any(|existing| existing == file)
+                    {
+                        source_files.push(file.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    if source_files.is_empty() {
+        return Err(anyhow::anyhow!(
+            "issue {issue_id} has no diagnosed source locations; re-run `check`/`review` with a real --provider so diagnosis can locate the source"
+        ));
+    }
+
+    Ok(patch::PatchInput {
+        issue_id: issue_id.to_owned(),
+        title: field("title"),
+        expected: field("expected"),
+        actual: field("actual"),
+        source_files,
+    })
 }
 
 /// 归档一次运行到本地 store,失败仅告警不阻断(存储是尽力而为的附加能力)。
@@ -198,6 +264,34 @@ pub async fn run() -> Result<()> {
                     note,
                 } => set_issue_approval(&store, run, &issue_id, "ignored", note)?,
             }
+        }
+        Command::Fix {
+            issue_id,
+            run,
+            provider,
+            no_cache,
+            json,
+        } => {
+            let store = storage::open(&std::path::PathBuf::from(".specprobe"))?;
+            let run_id = resolve_run(&store, run)?;
+            let summary = store
+                .get_run(&run_id)?
+                .ok_or_else(|| anyhow::anyhow!("run {run_id} was not found"))?;
+            let report: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&summary.report_path)?)?;
+            let input = build_patch_input(&report, &issue_id)?;
+            let project_root = report
+                .pointer("/config/project_root")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("run report is missing config.project_root"))?;
+            let generated = patch::generate_patch(
+                &input,
+                std::path::Path::new(project_root),
+                provider,
+                cache_dir_unless(no_cache),
+            )
+            .await?;
+            output::print_patch(&generated, json)?;
         }
         Command::Doctor { json } => {
             let report = doctor::inspect_environment();

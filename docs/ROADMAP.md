@@ -156,7 +156,7 @@
 
 | 编号 | 任务 | 具体落实 |
 | --- | --- | --- |
-| 3.1 | 真补丁生成 | 对 accepted 的 Issue:LLM 读相关源码 → 输出 unified diff。硬约束:只允许修改它实际读过的文件;diff 必须过 `git apply --check`,失败回喂重试 ≤2 |
+| 3.1 | 真补丁生成 ✅ 已完成(2026-07-11) | `specprobe fix <ISSUE-ID> [--run] --provider <p>`:从归档 report.json 取 issue + 诊断源码定位 → LLM 读源文件全文 → 输出 unified diff(`src/patch.rs`)。硬约束落进 `run_chat_json` 的 parse 回路:只允许修改提供的文件、diff 必须过 `git apply --check`(经 stdin,`--recount`,无需 git 仓库),不过则带反馈自动重问。真机(fake OpenAI 端点)验证读报告→生成→校验→打印全链路;git apply "corrupt patch"(补丁无末尾换行)已修。**仅生成不应用**(应用属 3.2)|
 | 3.2 | 安全应用 | 前置:被测项目 git 工作区干净(否则需 `--allow-dirty` 显式豁免);补丁应用到新分支 `specprobe/fix-issue-xxx`,绝不碰用户当前分支;应用前展示 diff 并确认 |
 | 3.3 | 自动回归闭环 | 应用后自动重跑关联用例 + 全量浏览器计划,对比前后:目标缺陷消失且无新增失败 → "验证通过";否则自动回滚分支并附失败证据 |
 | 3.4 | 安全强化 | 启动命令白名单 + 首次确认后记忆(SQLite);AI 出站 payload 脱敏审计(现有日志脱敏扩展到所有出站内容);文档化威胁模型 |

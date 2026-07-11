@@ -29,13 +29,14 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - `specprobe runs list` / `runs show <id>`:浏览归档的历史运行(`.specprobe/specprobe.db`)。
 - `specprobe issues list` / `show <ID>` / `accept|reject|ignore <ID> [--note]`:审批问题。审批按 Issue 指纹跨运行持久——重跑时同一问题继承之前的决定,被 `ignore` 的默认不再出现(`--all` 显示)。
+- `specprobe fix <ISSUE-ID> --provider <p>`:对已诊断的问题生成修复补丁。从归档运行读取问题与诊断的源码定位,交给 LLM 产出 unified diff,并强制只改被诊断的文件、且必须通过 `git apply --check`(不过则带反馈重问)。当前只生成并展示补丁,不自动应用(应用到分支属 ROADMAP 3.2)。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 
 ## 当前状态与边界(如实声明)
 
 Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)进行中:一键 `check` 与 HTML 报告已完成。
 
-Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。尚未实现:补丁自动应用(提案只生成预览,不修改用户代码,属 Phase 3)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
+Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。Phase 3(修复闭环)进行中:3.1 真补丁生成(`fix`)已落地。尚未实现:补丁自动应用到分支与自动回归验证(ROADMAP 3.2/3.3)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
 
 ## 本地运行
 

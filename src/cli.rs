@@ -147,6 +147,23 @@ pub enum Command {
         #[command(subcommand)]
         action: IssuesAction,
     },
+    /// Generate a validated fix patch for an archived issue (LLM-backed, git apply --check verified).
+    Fix {
+        /// Issue id to fix (e.g. ISSUE-001).
+        issue_id: String,
+        /// Run id (defaults to the latest run).
+        #[arg(long)]
+        run: Option<String>,
+        /// AI provider used to generate the patch. Mock is rejected (needs a real model).
+        #[arg(long, value_enum, default_value_t = AiProviderKind::Mock)]
+        provider: AiProviderKind,
+        /// Disable the on-disk AI response cache (.specprobe/cache).
+        #[arg(long)]
+        no_cache: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check whether the local machine is ready for analysis and web testing.
     Doctor {
         /// Emit machine-readable JSON.

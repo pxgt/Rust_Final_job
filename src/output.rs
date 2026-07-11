@@ -4,6 +4,7 @@ use crate::ai::AiAnalysisReport;
 use crate::browser::BrowserRunReport;
 use crate::check::CheckReport;
 use crate::doctor::DoctorReport;
+use crate::patch::GeneratedPatch;
 use crate::remediation::RemediationReport;
 use crate::requirements::RequirementReport;
 use crate::review::ReviewReport;
@@ -132,6 +133,27 @@ pub fn print_issue_show(
     }
     println!("Approval: {}", issue.approval);
     println!("Fingerprint: {}", issue.fingerprint);
+    Ok(())
+}
+
+pub fn print_patch(patch: &GeneratedPatch, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(patch)?);
+        return Ok(());
+    }
+    println!(
+        "Fix patch for {} (targets: {})",
+        patch.issue_id,
+        patch.target_files.join(", ")
+    );
+    println!("Verified with `git apply --check`.\n");
+    print!("{}", patch.diff);
+    if !patch.diff.ends_with('\n') {
+        println!();
+    }
+    println!(
+        "\nReview the diff above. Applying patches to a branch is not yet automated (ROADMAP 3.2)."
+    );
     Ok(())
 }
 
