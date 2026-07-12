@@ -103,6 +103,15 @@ impl PlaywrightAction {
         }
     }
 
+    /// 是否为断言类动作。断言失败是缺陷证据,执行级修复回路(1.8)绝不修改;
+    /// 操作类(goto/wait/click/fill/press/screenshot)失败说明场景本身坏了,可修复。
+    pub fn is_assertion(&self) -> bool {
+        matches!(
+            self,
+            Self::ExpectVisible { .. } | Self::ExpectHidden { .. } | Self::ExpectText { .. }
+        )
+    }
+
     /// 动作的主要目标(selector / url / 名称),用于人类可读报告。
     pub fn target(&self) -> String {
         match self {
@@ -163,6 +172,14 @@ enum RunnerEvent {
     Trace {
         path: String,
     },
+    /// 动作最终失败时的页面快照(ROADMAP 1.8 修复回路证据)。
+    FailureSnapshot {
+        index: usize,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        interactive: Vec<InteractiveElement>,
+    },
     Finished {
         ok: bool,
     },
@@ -185,8 +202,17 @@ pub struct PlaywrightOutcome {
     pub snapshot: Option<PageSnapshot>,
     /// 归档的 Playwright trace.zip 路径(ROADMAP 3.5)。
     pub trace_path: Option<String>,
+    /// 各失败动作当刻的页面快照,按动作下标索引(ROADMAP 1.8 修复回路证据)。
+    pub failure_snapshots: Vec<FailureSnapshot>,
     pub finished_ok: Option<bool>,
     pub fatal: Option<String>,
+}
+
+/// 某个动作最终失败时采集的页面快照。
+#[derive(Debug, Clone, Serialize)]
+pub struct FailureSnapshot {
+    pub index: usize,
+    pub snapshot: PageSnapshot,
 }
 
 impl PlaywrightOutcome {
@@ -417,6 +443,14 @@ fn build_outcome(lines: &[String]) -> PlaywrightOutcome {
                 outcome.snapshot = Some(PageSnapshot { title, interactive })
             }
             RunnerEvent::Trace { path } => outcome.trace_path = Some(path),
+            RunnerEvent::FailureSnapshot {
+                index,
+                title,
+                interactive,
+            } => outcome.failure_snapshots.push(FailureSnapshot {
+                index,
+                snapshot: PageSnapshot { title, interactive },
+            }),
             RunnerEvent::Finished { ok } => outcome.finished_ok = Some(ok),
             RunnerEvent::Fatal { message } => outcome.fatal = Some(message),
             RunnerEvent::Unknown => {}

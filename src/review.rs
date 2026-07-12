@@ -37,6 +37,8 @@ pub struct ReviewOptions {
     pub skip_browser: bool,
     pub launch_timeout_secs: u64,
     pub browser_timeout_secs: u64,
+    /// 场景生成/执行采样轮数(0/1 单次,上限 3;多轮取检出并集,ROADMAP 1.8)。
+    pub samples: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -301,6 +303,7 @@ pub async fn generate_review_report_with(
                 BrowserOptions {
                     provider: options.provider,
                     cache_dir: options.cache_dir.clone(),
+                    samples: options.samples,
                 },
             )
             .await;
@@ -391,6 +394,7 @@ async fn run_orchestrated(
     let browser_options = BrowserOptions {
         provider: options.provider,
         cache_dir: options.cache_dir.clone(),
+        samples: options.samples,
     };
     match start_app(&options.project_path).await {
         Ok(mut app) => {
@@ -1133,6 +1137,7 @@ mod tests {
                 skip_browser: true,
                 launch_timeout_secs: 1,
                 browser_timeout_secs: 1,
+                samples: 0,
             },
         )
         .await
@@ -1165,6 +1170,7 @@ mod tests {
                 skip_browser: false,
                 launch_timeout_secs: 1,
                 browser_timeout_secs: 1,
+                samples: 0,
             },
         )
         .await

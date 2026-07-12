@@ -369,6 +369,30 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 
 ## 12. 开发日志
 
+### 2026-07-12（Phase 1.8 场景执行级修复回路,分支 phase-1.8-repair-loop)
+
+- **分类规则(防目标冲突的核心设计)**:场景第一个失败步骤是操作类(goto/wait/click/fill/press)→ 场景本身坏了(selector 错/漏步骤),可修复;是断言类(expect_*)→ 这是缺陷证据,绝不修复;步骤未执行(detail=None,前置失败/执行器中断)→ 不修复。`PlaywrightAction::is_assertion` + `collect_broken_scenarios`。
+- **失败证据采集**:runner.mjs 动作最终失败时采集当刻 DOM 快照,发 `failure_snapshot` 事件(带动作下标);Rust `PlaywrightOutcome.failure_snapshots`。协议 v1 向后兼容。
+- **修复回路**(`scenario::repair_scenarios` + `browser::repair_round`):坏场景带失败步骤/错误详情/失败时页面状态回喂 LLM;selector 合法集 = 初始快照 ∪ 失败快照(动态元素);复用 run_chat_json 反馈重问;只重执行修正的场景,按需求 ID 替换结果;一轮上限。
+- **断言强度护栏**(`enforce_assertion_strength`):修复输出的 expect_* 动作类型多重集与 expect_text 断言文本必须与原场景一致,只许修操作步骤与断言 selector;违反则反馈重问。防止修复回路把真缺陷检测"修"掉。
+- **修复成功的"原谅"语义**:第一次执行中已修复场景的失败动作降为 Info 诊断(带 repaired 标注),整体 success 以修复后场景结果为准(fatal 除外);ScenarioResult 新增 `repaired` 字段。修复失败保留原始失败证据。
+- 真机 e2e(真 sidecar + demo 服务 + 顺序应答假 LLM)双向验证:①操作失败→修复→重执行通过,repaired=true、execution.success=true、LLM 恰 2 次调用;②断言失败→不触发修复(LLM 恰 1 次调用)、缺陷证据原样保留。
+- 94 单测(+5:3 分类 + 2 护栏)+ 8 集成全过,严格 Clippy 无警告。
+
+**同日:多次采样取一致(1.8 第二块)**
+- `--samples N`(1~3,check/review/browser):`generate_scenarios` 增 `variant: Option<(round,total)>`,prompt 注入轮次标记(区分缓存键——温度 0 下同 prompt 会命中缓存返回相同样本——并引导本轮独立设计);每轮独立生成/执行/修复(`run_scenario_sample`)。
+- 合并规则 `merge_sample_results`:**检出并集**——任一轮失败即判失败并保留该轮证据(标题/步骤/截图),已失败不被后续轮通过"洗白";新需求结果直接加入。首轮证据为主证据,后续轮 run_dir 记入诊断。
+- 依据:真机验收观察到的波动全是漏检方向(漏步骤/编造 expect_hidden 目标致假通过/断言强度回退),故取检出上界;误报侧由 2.5 审批指纹持久兜底。
+- 真机 e2e(--samples 2,顺序假 LLM):弱断言轮通过+强断言轮失败 → 合并判失败附强断言轮证据,"union of detections" 诊断,恰 2 次生成调用。
+- 95 单测(+1 合并)+ 8 集成全过,严格 Clippy 无警告。
+
+**同日:真实 LLM 检出率稳定性验收通过,1.8 收官合入 main**
+- DeepSeek + Chromium,`check --no-cache --yes` 独立 6 轮:单采样 5/5、5/5、4/5;`--samples 2` 4/5、5/5(1 误报)、5/5(地标快照后,0 误报)。历史 3~4/5(最差 3/5)→ 全轮 ≥4/5;DEMO-005(localStorage)历史从未检出,本轮 6/6 稳定检出。
+- 并集救援真实可见:B1 首轮筛选场景通过(单独仅 3/5),第二轮抓回 → 4/5;B2 并集救回 DEMO-003。
+- 断言强度护栏真实触发:B2 中 LLM 修复两度试图弱化断言被拒,原始失败证据保留。
+- 验收暴露误报根因并修复:断言目标 `#api-banner` 为非交互元素、不在 DOM 摘要 → LLM 猜 `.error-banner`;runner `collectSnapshot` 补充**地标元素**(带 id 的非交互节点,上限 80),B3 复测误报消除、两轮生成独立全中。
+- 验收门(稳定 ≥4/5)达成。分支合入 main。
+
 ### 2026-07-12（里程碑 v0.9.0 与 Phase 1.8 启动决策)
 
 - 用户决策:Phase 4(广度)不做;尝试 Phase 1.8 场景执行级修复回路(深水区,风险高)。

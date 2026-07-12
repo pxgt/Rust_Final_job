@@ -397,6 +397,7 @@ mod tests {
                 skip_browser: true,
                 launch_timeout_secs: 1,
                 browser_timeout_secs: 1,
+                samples: 0,
             },
         )
         .await

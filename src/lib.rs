@@ -199,6 +199,7 @@ pub async fn run() -> Result<()> {
             no_store,
             launch_timeout_secs,
             browser_timeout_secs,
+            samples,
             json,
         } => {
             let loaded = config::load_project_config(&path)?;
@@ -252,6 +253,7 @@ pub async fn run() -> Result<()> {
                     assume_yes: yes,
                     launch_timeout_secs: settings.launch_timeout_secs,
                     browser_timeout_secs: settings.browser_timeout_secs,
+                    samples,
                 },
                 confirm,
                 &stage,
@@ -486,6 +488,7 @@ pub async fn run() -> Result<()> {
             provider,
             no_cache,
             timeout_secs,
+            samples,
             dry_run,
             json,
         } => {
@@ -497,6 +500,7 @@ pub async fn run() -> Result<()> {
                 browser::BrowserOptions {
                     provider,
                     cache_dir: cache_dir_unless(no_cache),
+                    samples,
                 },
             )
             .await?;
@@ -513,6 +517,7 @@ pub async fn run() -> Result<()> {
             skip_browser,
             launch_timeout_secs,
             browser_timeout_secs,
+            samples,
             html,
             no_store,
             json,
@@ -531,6 +536,7 @@ pub async fn run() -> Result<()> {
                     skip_browser,
                     launch_timeout_secs,
                     browser_timeout_secs,
+                    samples,
                 },
                 &stage,
             )

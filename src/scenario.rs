@@ -34,7 +34,61 @@ pub struct ScenarioPlan {
 }
 
 /// 用 LLM 生成场景。Mock Provider 返回空计划(调用方据此退回通用采集)。
+/// `variant` 为多次采样的轮次标记(ROADMAP 1.8):注入 prompt 以区分缓存键并
+/// 驱动样本多样性;单次生成传 None,行为与原先完全一致。
 pub async fn generate_scenarios(
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    base_url: &str,
+    provider: AiProviderKind,
+    cache_dir: Option<PathBuf>,
+    variant: Option<(u32, u32)>,
+) -> Result<ScenarioPlan, AiError> {
+    let Some(protocol) = chat_protocol_for(provider)? else {
+        return Ok(ScenarioPlan {
+            scenarios: Vec::new(),
+            notes: Vec::new(),
+            transport: AiTransportInfo {
+                attempts: 0,
+                cache_hit: false,
+                usage: None,
+            },
+        });
+    };
+    let cache = cache_dir.map(|dir| AiCache { dir });
+    let messages = build_messages(report, snapshot, variant);
+    let base_url = base_url.to_owned();
+
+    let (parsed, transport) =
+        run_chat_json(&protocol, messages, cache.as_ref(), |content, lenient| {
+            parse_scenarios(content, report, snapshot, &base_url, lenient)
+        })
+        .await?;
+
+    Ok(ScenarioPlan {
+        scenarios: parsed.scenarios,
+        notes: parsed.notes,
+        transport,
+    })
+}
+
+/// 一个执行时坏掉的场景:第一个失败步骤是操作类,未走到断言(ROADMAP 1.8)。
+/// 断言失败的场景不属于此类——那是缺陷证据,不修复。
+pub struct BrokenScenario {
+    pub scenario: Scenario,
+    /// `scenario.steps` 内第一个失败步骤的下标。
+    pub failed_step: usize,
+    /// 执行器报告的失败详情。
+    pub failed_detail: String,
+    /// 失败当刻的页面快照(执行器采集;可能缺失)。
+    pub page_at_failure: Option<PageSnapshot>,
+}
+
+/// 执行级修复回路(ROADMAP 1.8):把坏场景的失败步骤 + 执行证据回喂 LLM 修正。
+/// 护栏:修复只许改操作步骤与断言 selector,断言强度(expect_* 类型集合与
+/// expect_text 文本)必须与原场景一致,防止修复回路把真缺陷检测"修"掉。
+pub async fn repair_scenarios(
+    broken: &[BrokenScenario],
     report: &RequirementReport,
     snapshot: &PageSnapshot,
     base_url: &str,
@@ -53,12 +107,30 @@ pub async fn generate_scenarios(
         });
     };
     let cache = cache_dir.map(|dir| AiCache { dir });
-    let messages = build_messages(report, snapshot);
-    let base_url = base_url.to_owned();
 
+    // selector 合法集:初始快照 ∪ 各失败快照(动态出现的元素只在失败快照里)。
+    let mut merged = snapshot.clone();
+    for item in broken {
+        if let Some(page) = &item.page_at_failure {
+            for element in &page.interactive {
+                if !merged
+                    .interactive
+                    .iter()
+                    .any(|existing| existing.selector == element.selector)
+                {
+                    merged.interactive.push(element.clone());
+                }
+            }
+        }
+    }
+
+    let messages = build_repair_messages(broken, &merged);
+    let base_url = base_url.to_owned();
     let (parsed, transport) =
         run_chat_json(&protocol, messages, cache.as_ref(), |content, lenient| {
-            parse_scenarios(content, report, snapshot, &base_url, lenient)
+            let parsed = parse_scenarios(content, report, &merged, &base_url, lenient)?;
+            enforce_assertion_strength(&parsed, broken)?;
+            Ok(parsed)
         })
         .await?;
 
@@ -67,6 +139,118 @@ pub async fn generate_scenarios(
         notes: parsed.notes,
         transport,
     })
+}
+
+/// 断言强度护栏:每个修复场景的 expect_* 动作类型多重集与 expect_text 断言文本
+/// 必须与原场景一致(断言 selector 允许调整)。不一致返回反馈文本触发重问。
+fn enforce_assertion_strength(
+    parsed: &ParsedScenarios,
+    broken: &[BrokenScenario],
+) -> Result<(), String> {
+    for repaired in &parsed.scenarios {
+        let Some(original) = broken
+            .iter()
+            .find(|item| item.scenario.requirement_id == repaired.requirement_id)
+        else {
+            return Err(format!(
+                "scenario {} was not among the broken scenarios to repair",
+                repaired.requirement_id
+            ));
+        };
+        let signature = |scenario: &Scenario| {
+            let mut labels: Vec<&str> = scenario
+                .steps
+                .iter()
+                .filter(|step| step.is_assertion())
+                .map(|step| step.label())
+                .collect();
+            labels.sort_unstable();
+            let mut texts: Vec<String> = scenario
+                .steps
+                .iter()
+                .filter_map(|step| match step {
+                    PlaywrightAction::ExpectText { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect();
+            texts.sort_unstable();
+            (labels, texts)
+        };
+        if signature(repaired) != signature(&original.scenario) {
+            return Err(format!(
+                "scenario {}: the repaired steps weaken or change the assertions; keep the same expect_* actions and the same expect_text texts, only fix the failing operational step (and assertion selectors if needed)",
+                repaired.requirement_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn build_repair_messages(broken: &[BrokenScenario], snapshot: &PageSnapshot) -> Vec<Value> {
+    vec![
+        json!({"role": "system", "content": repair_system_prompt()}),
+        json!({"role": "user", "content": repair_user_prompt(broken, snapshot)}),
+    ]
+}
+
+fn repair_system_prompt() -> String {
+    r#"You repair broken browser test scenarios for an evidence-driven testing tool.
+Each scenario below failed at an OPERATIONAL step (navigation / clicking / filling) before its
+assertions could run — the test itself is broken, not the application.
+
+Fix each scenario using the execution evidence (failing step, error, page state at failure):
+correct wrong selectors, add missing interaction steps, or reorder steps.
+
+Hard rules:
+- Do NOT weaken assertions. Keep exactly the same expect_visible / expect_hidden / expect_text
+  actions and the same expect_text texts as the original scenario. You may fix an assertion's
+  selector, never its intent.
+- For click, fill and press use a selector taken verbatim from the provided interactive elements.
+- Respond with the same JSON schema as scenario generation:
+  {"scenarios": [{"requirement_id": ..., "title": ..., "expected_observation": ..., "steps": [...]}], "notes": [...]}
+  Return one repaired scenario per broken scenario, same requirement_id. No markdown fences."#
+        .to_owned()
+}
+
+fn repair_user_prompt(broken: &[BrokenScenario], snapshot: &PageSnapshot) -> String {
+    let mut prompt = String::new();
+    prompt.push_str("Interactive elements (selector — role — text):\n");
+    for element in &snapshot.interactive {
+        prompt.push_str(&format!(
+            "- {} — {} — {}\n",
+            element.selector, element.role, element.text
+        ));
+    }
+    for item in broken {
+        let scenario = &item.scenario;
+        prompt.push_str(&format!(
+            "\nBroken scenario for {} — {}\nExpected observation: {}\nSteps:\n",
+            scenario.requirement_id, scenario.title, scenario.expected_observation
+        ));
+        for (index, step) in scenario.steps.iter().enumerate() {
+            let marker = if index == item.failed_step {
+                "  <-- FAILED HERE"
+            } else {
+                ""
+            };
+            prompt.push_str(&format!(
+                "{index}. {} {}{marker}\n",
+                step.label(),
+                step.target()
+            ));
+        }
+        prompt.push_str(&format!("Failure detail: {}\n", item.failed_detail));
+        if let Some(page) = &item.page_at_failure {
+            prompt.push_str("Page state at failure (interactive elements):\n");
+            for element in &page.interactive {
+                prompt.push_str(&format!(
+                    "- {} — {} — {}\n",
+                    element.selector, element.role, element.text
+                ));
+            }
+        }
+    }
+    prompt
 }
 
 #[derive(Debug)]
@@ -258,10 +442,21 @@ fn to_action(
     }
 }
 
-fn build_messages(report: &RequirementReport, snapshot: &PageSnapshot) -> Vec<Value> {
+fn build_messages(
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    variant: Option<(u32, u32)>,
+) -> Vec<Value> {
+    let mut user = user_prompt(report, snapshot);
+    if let Some((round, total)) = variant {
+        // 采样轮次标记:区分缓存键,并引导本轮独立设计(降低单次生成波动的影响)。
+        user.push_str(&format!(
+            "\nSampling round {round} of {total}: design the scenarios independently from other rounds; when a requirement allows multiple reasonable interaction paths or assertion targets, prefer one you have not tried in earlier rounds.\n"
+        ));
+    }
     vec![
         json!({"role": "system", "content": system_prompt()}),
-        json!({"role": "user", "content": user_prompt(report, snapshot)}),
+        json!({"role": "user", "content": user}),
     ]
 }
 
@@ -456,6 +651,84 @@ mod tests {
         assert!(feedback.contains("REQ-404"));
     }
 
+    fn scenarios_json_with_assert(assert_step: serde_json::Value) -> String {
+        serde_json::json!({
+            "scenarios": [{
+                "requirement_id": "REQ-001",
+                "title": "添加任务",
+                "expected_observation": "任务出现在列表中",
+                "steps": [
+                    {"action": "fill", "selector": "#task-input", "value": "写周报"},
+                    {"action": "click", "selector": "#add-task-btn"},
+                    assert_step
+                ]
+            }],
+            "notes": []
+        })
+        .to_string()
+    }
+
+    fn broken_original() -> Vec<super::BrokenScenario> {
+        let report = report();
+        let snapshot = snapshot();
+        let original = parse_scenarios(
+            &valid_scenarios_json(),
+            &report,
+            &snapshot,
+            "http://x",
+            false,
+        )
+        .expect("original parses")
+        .scenarios
+        .remove(0);
+        vec![super::BrokenScenario {
+            scenario: original,
+            failed_step: 1,
+            failed_detail: "click timed out".to_owned(),
+            page_at_failure: None,
+        }]
+    }
+
+    #[test]
+    fn repair_guard_rejects_weakened_assertions() {
+        let report = report();
+        let snapshot = snapshot();
+        let broken = broken_original();
+
+        // 把 expect_text 弱化为 expect_visible → 拒绝并给出反馈。
+        let weakened = scenarios_json_with_assert(
+            serde_json::json!({"action": "expect_visible", "selector": "#task-list"}),
+        );
+        let parsed =
+            parse_scenarios(&weakened, &report, &snapshot, "http://x", false).expect("parses");
+        let feedback = super::enforce_assertion_strength(&parsed, &broken)
+            .expect_err("weakened assertion rejected");
+        assert!(feedback.contains("weaken"));
+
+        // 改掉断言文本 → 同样拒绝。
+        let changed_text = scenarios_json_with_assert(
+            serde_json::json!({"action": "expect_text", "selector": "#task-list", "text": "别的内容"}),
+        );
+        let parsed =
+            parse_scenarios(&changed_text, &report, &snapshot, "http://x", false).expect("parses");
+        assert!(super::enforce_assertion_strength(&parsed, &broken).is_err());
+    }
+
+    #[test]
+    fn repair_guard_allows_selector_fix_with_same_assertions() {
+        let report = report();
+        let snapshot = snapshot();
+        let broken = broken_original();
+
+        // 断言类型与文本不变,仅调整断言 selector(和操作步骤)→ 允许。
+        let fixed = scenarios_json_with_assert(
+            serde_json::json!({"action": "expect_text", "selector": "#todo-list", "text": "写周报"}),
+        );
+        let parsed =
+            parse_scenarios(&fixed, &report, &snapshot, "http://x", false).expect("parses");
+        assert!(super::enforce_assertion_strength(&parsed, &broken).is_ok());
+    }
+
     #[tokio::test]
     async fn mock_provider_yields_empty_plan() {
         let report = report();
@@ -466,6 +739,7 @@ mod tests {
             &snapshot,
             "http://127.0.0.1:4173",
             AiProviderKind::Mock,
+            None,
             None,
         )
         .await

@@ -124,6 +124,9 @@ pub enum Command {
         /// Maximum browser page probe time in seconds (default 10).
         #[arg(long)]
         browser_timeout_secs: Option<u64>,
+        /// Scenario sampling rounds (1-3). >1 unions detections across rounds for stability.
+        #[arg(long, default_value_t = 1)]
+        samples: u32,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -252,6 +255,9 @@ pub enum Command {
         /// Maximum page probe time.
         #[arg(long, default_value_t = 10)]
         timeout_secs: u64,
+        /// Scenario sampling rounds (1-3). >1 unions detections across rounds for stability.
+        #[arg(long, default_value_t = 1)]
+        samples: u32,
         /// Generate the browser plan without probing the page.
         #[arg(long)]
         dry_run: bool,
@@ -291,6 +297,9 @@ pub enum Command {
         /// Maximum browser page probe time.
         #[arg(long, default_value_t = 10)]
         browser_timeout_secs: u64,
+        /// Scenario sampling rounds (1-3). >1 unions detections across rounds for stability.
+        #[arg(long, default_value_t = 1)]
+        samples: u32,
         /// Also write a self-contained HTML report to this path.
         #[arg(long, value_name = "PATH")]
         html: Option<PathBuf>,

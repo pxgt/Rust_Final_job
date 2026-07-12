@@ -27,6 +27,8 @@ pub struct CheckOptions {
     pub assume_yes: bool,
     pub launch_timeout_secs: u64,
     pub browser_timeout_secs: u64,
+    /// 场景采样轮数(0/1 单次,上限 3;多轮取检出并集,ROADMAP 1.8)。
+    pub samples: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +90,7 @@ pub async fn run_check_with_progress(
             skip_browser: false,
             launch_timeout_secs: options.launch_timeout_secs,
             browser_timeout_secs: options.browser_timeout_secs,
+            samples: options.samples,
         },
         progress,
     )
@@ -151,6 +154,7 @@ mod tests {
             assume_yes,
             launch_timeout_secs: 1,
             browser_timeout_secs: 1,
+            samples: 0,
         }
     }
 
