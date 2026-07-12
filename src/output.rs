@@ -6,6 +6,7 @@ use crate::browser::BrowserRunReport;
 use crate::check::CheckReport;
 use crate::doctor::DoctorReport;
 use crate::patch::GeneratedPatch;
+use crate::regression::RegressionVerdict;
 use crate::remediation::RemediationReport;
 use crate::requirements::RequirementReport;
 use crate::review::ReviewReport;
@@ -172,6 +173,31 @@ pub fn print_apply_outcome(outcome: &ApplyOutcome, json: bool) -> Result<()> {
         "Review it with `git diff {}..{}`, then merge or delete the branch.",
         outcome.restored_branch, outcome.branch
     );
+    Ok(())
+}
+
+pub fn print_verdict(verdict: &RegressionVerdict, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(verdict)?);
+        return Ok(());
+    }
+    if verdict.verified {
+        println!(
+            "\nRegression check PASSED — the target defect is resolved and no new issues appeared."
+        );
+    } else {
+        println!("\nRegression check FAILED.");
+        if !verdict.target_resolved {
+            println!("- the target defect is still present after the fix");
+        }
+        if !verdict.new_issues.is_empty() {
+            println!(
+                "- {} new issue(s) appeared (fingerprints: {})",
+                verdict.new_issues.len(),
+                verdict.new_issues.join(", ")
+            );
+        }
+    }
     Ok(())
 }
 

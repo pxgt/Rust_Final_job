@@ -29,14 +29,14 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - `specprobe runs list` / `runs show <id>`:浏览归档的历史运行(`.specprobe/specprobe.db`)。
 - `specprobe issues list` / `show <ID>` / `accept|reject|ignore <ID> [--note]`:审批问题。审批按 Issue 指纹跨运行持久——重跑时同一问题继承之前的决定,被 `ignore` 的默认不再出现(`--all` 显示)。
-- `specprobe fix <ISSUE-ID> --provider <p> [--apply]`:对已诊断的问题生成修复补丁。从归档运行读取问题与诊断的源码定位,交给 LLM 产出 unified diff,并强制只改被诊断的文件、且必须通过 `git apply --check`(不过则带反馈重问)。默认只生成并展示;加 `--apply` 时,先终端确认,再把补丁提交到**隔离分支** `specprobe/fix-<issue>`(前置项目 git 工作区干净,否则需 `--allow-dirty`),提交后切回你的原分支——绝不改动当前分支,失败自动回滚。之后用 `git diff <原分支>..specprobe/fix-<issue>` 审阅再决定合并。
+- `specprobe fix <ISSUE-ID> --provider <p> [--apply]`:对已诊断的问题生成修复补丁。从归档运行读取问题与诊断的源码定位,交给 LLM 产出 unified diff,并强制只改被诊断的文件、且必须通过 `git apply --check`(不过则带反馈重问)。默认只生成并展示;加 `--apply` 时,先终端确认,再把补丁提交到**隔离分支** `specprobe/fix-<issue>`(前置项目 git 工作区干净,否则需 `--allow-dirty`),提交后切回你的原分支——绝不改动当前分支,失败自动回滚。再加 `--verify` 时,应用后用 `git worktree` 把修复分支物化重跑评审,按 Issue 指纹对比:目标缺陷消失且无新增问题 → 报"验证通过"保留分支;否则自动回滚分支并列出仍在/新增的问题。之后用 `git diff <原分支>..specprobe/fix-<issue>` 审阅再决定合并。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 
 ## 当前状态与边界(如实声明)
 
 Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)进行中:一键 `check` 与 HTML 报告已完成。
 
-Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。Phase 3(修复闭环)进行中:3.1 真补丁生成 + 3.2 安全应用到隔离分支(`fix --apply`)已落地。尚未实现:应用后的自动回归验证(ROADMAP 3.3)。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
+Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。**Phase 3(修复闭环)已完成**:3.1 真补丁生成 + 3.2 安全应用到隔离分支 + 3.3 自动回归验证(`fix --apply --verify`),端到端"诊断 → 生成补丁 → 应用到隔离分支 → 回归验证"闭环打通。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
 
 ## 本地运行
 

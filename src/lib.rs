@@ -10,6 +10,7 @@ pub mod output;
 pub mod patch;
 pub mod playwright;
 pub mod refine;
+pub mod regression;
 pub mod remediation;
 pub mod report;
 pub mod requirements;
@@ -135,6 +136,39 @@ fn build_patch_input(report: &serde_json::Value, issue_id: &str) -> Result<patch
         actual: field("actual"),
         source_files,
     })
+}
+
+/// 从归档 report.json 的 config 重建验证重跑参数(与 baseline run 一致的执行设置)。
+fn verify_options_from_report(
+    report: &serde_json::Value,
+    provider: ai::AiProviderKind,
+    no_cache: bool,
+) -> regression::VerifyOptions {
+    let string_at = |ptr: &str| {
+        report
+            .pointer(ptr)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let bool_at = |ptr: &str| report.pointer(ptr).and_then(serde_json::Value::as_bool);
+    let u64_at = |ptr: &str, default: u64| {
+        report
+            .pointer(ptr)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(default)
+    };
+    regression::VerifyOptions {
+        requirements_source: std::path::PathBuf::from(string_at("/config/requirements_source")),
+        base_url: string_at("/config/base_url"),
+        provider,
+        cache_dir: cache_dir_unless(no_cache),
+        execute: bool_at("/config/execute").unwrap_or(false),
+        skip_launch: !bool_at("/config/launch_enabled").unwrap_or(true),
+        skip_browser: !bool_at("/config/browser_enabled").unwrap_or(true),
+        launch_timeout_secs: u64_at("/config/launch_timeout_secs", 15),
+        browser_timeout_secs: u64_at("/config/browser_timeout_secs", 10),
+    }
 }
 
 /// 归档一次运行到本地 store,失败仅告警不阻断(存储是尽力而为的附加能力)。
@@ -285,8 +319,12 @@ pub async fn run() -> Result<()> {
             no_cache,
             apply,
             allow_dirty,
+            verify,
             json,
         } => {
+            if verify && !apply {
+                anyhow::bail!("--verify requires --apply");
+            }
             let store = storage::open(&std::path::PathBuf::from(".specprobe"))?;
             let run_id = resolve_run(&store, run)?;
             let summary = store
@@ -315,12 +353,42 @@ pub async fn run() -> Result<()> {
                     "About to apply this patch to a new branch {branch} in {project_root} (your current branch is left untouched)."
                 );
                 if confirm_on_terminal(&message) {
+                    let project = std::path::Path::new(&project_root);
                     let outcome = apply::apply_patch(
-                        std::path::Path::new(&project_root),
+                        project,
                         &generated,
                         &apply::ApplyOptions { allow_dirty },
                     )?;
                     output::print_apply_outcome(&outcome, json)?;
+
+                    if verify {
+                        let baseline: Vec<String> = store
+                            .run_issues(&run_id)?
+                            .into_iter()
+                            .map(|issue| issue.fingerprint)
+                            .collect();
+                        let target = store
+                            .issue_fingerprint_of(&run_id, &issue_id)?
+                            .unwrap_or_default();
+                        let options = verify_options_from_report(&report, provider, no_cache);
+                        eprintln!("Verifying the fix by re-running review on the branch…");
+                        let verdict = regression::verify_on_branch(
+                            project,
+                            &outcome.branch,
+                            &baseline,
+                            &target,
+                            &options,
+                        )
+                        .await?;
+                        output::print_verdict(&verdict, json)?;
+                        if !verdict.verified {
+                            apply::delete_branch(project, &outcome.branch)?;
+                            eprintln!(
+                                "Verification failed; rolled back branch {}.",
+                                outcome.branch
+                            );
+                        }
+                    }
                 } else {
                     eprintln!("Aborted; patch was not applied.");
                 }

@@ -107,6 +107,12 @@ pub fn apply_patch(
     }
 }
 
+/// 删除隔离分支(验证未通过时回滚)。调用方须已切回其它分支。
+pub fn delete_branch(project: &Path, branch: &str) -> Result<(), ApplyError> {
+    git_step(project, "branch -D", &["branch", "-D", branch])?;
+    Ok(())
+}
+
 fn apply_and_commit(project: &Path, patch: &GeneratedPatch) -> Result<String, ApplyError> {
     run_git_stdin(
         project,

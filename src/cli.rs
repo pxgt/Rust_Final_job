@@ -166,6 +166,9 @@ pub enum Command {
         /// Allow applying even if the project's git working tree is not clean.
         #[arg(long)]
         allow_dirty: bool,
+        /// After applying, re-run review on the branch and verify the defect is resolved; roll back if not (implies --apply).
+        #[arg(long)]
+        verify: bool,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
