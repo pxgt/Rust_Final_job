@@ -14,9 +14,9 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 
 一条命令完成:扫描技术栈 → 解析需求 → (确认后)自动启动被测服务并探测就绪 → 真实浏览器执行 → 生成问题清单与 `.specprobe/report.html` 可视化报告。执行项目启动命令前会交互确认(`--yes` 跳过);加 `--provider openai-compatible|ollama` 启用 LLM 精解析、具体交互场景与源码级诊断。
 
-## 当前能力(0.9.0)
+## 当前能力(1.0.0)
 
-- `specprobe check [PATH]`:一键检查(上文快速开始),是面向用户的主入口;以下子命令用于分步调试。
+- `specprobe check [PATH]`:一键检查(上文快速开始),是面向用户的主入口;以下子命令用于分步调试。加 `--samples 2|3` 启用多轮场景采样取检出并集(降低单次 LLM 生成波动,`review`/`browser` 同样支持)。
 - `specprobe init [PATH]`:在项目根生成 `specprobe.toml` 配置模板,把常用参数(base_url、provider、需求源、超时等)写进去,之后 `check` 就不必每次带一串 flag。优先级:CLI 参数 > 环境变量 > 配置文件 > 默认。
 - `specprobe doctor`:检查本机 Rust、Git、Node、MSVC 和 AI 接入条件。
 - `specprobe scan <PATH>`:识别项目技术栈、需求文档、源码语言及测试文件。
@@ -35,9 +35,12 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 
 ## 当前状态与边界(如实声明)
 
-Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)、Phase 3(修复闭环:补丁生成 → 安全应用隔离分支 → 回归验证 → 安全强化 → 稳定性)均已完成。浏览器执行支持失败重试(抗 flaky)、Playwright trace 归档与 sidecar 崩溃识别。
+ROADMAP 规划的全部产品化阶段已完成(Phase 1 真实化 / 1.8 检出稳定性 / 2 易用性 / 3 修复闭环;Phase 4 广度经评估不再投入):
 
-Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。**Phase 3(修复闭环)已完成**:3.1 真补丁生成 + 3.2 安全应用到隔离分支 + 3.3 自动回归验证(`fix --apply --verify`),端到端"诊断 → 生成补丁 → 应用到隔离分支 → 回归验证"闭环打通。**Phase 1.8(检出率稳定性)已完成**:场景执行级修复回路(操作步骤失败带证据回喂 LLM 修正,断言失败作为缺陷证据绝不修改)+ `--samples` 多轮采样取检出并集;DeepSeek 真机 6 轮复测全部 ≥4/5、多数 5/5(历史 3~4/5),详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。CI 在 Linux / Windows / macOS 三平台验证。
+- **真机验收**(DeepSeek + Chromium,FocusBoard 5 个注入缺陷):接手基线 1/5 → Phase 1 后 3~4/5 单次波动 → **1.8 后 6 轮独立复测全部 ≥4/5、多数 5/5,零误报收尾**;API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`。详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+- **检出稳定性(1.8)**:场景执行级修复回路——操作步骤失败带执行证据(含失败当刻 DOM)回喂 LLM 修正;断言失败是缺陷证据,绝不修改(断言强度护栏拦截任何弱化)。`--samples` 多轮采样取检出并集。
+- **修复闭环(Phase 3)**:`fix` 补丁生成(`git apply --check` 校验)→ `--apply` 隔离分支 → `--verify` worktree 回归验证;出站脱敏、启动命令确认记忆、威胁模型;浏览器动作失败重试、Playwright trace 归档、sidecar 崩溃识别。
+- CI 在 Linux / Windows / macOS 三平台验证。**已知边界**:补丁只保证"可干净应用 + 隔离 + 可回滚",语义正确性需人工审阅;`runs diff`、彩色输出等小项作为遗留记录于 ROADMAP。
 
 ## 本地运行
 
