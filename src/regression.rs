@@ -141,6 +141,8 @@ async fn run_review_and_evaluate(
             skip_browser: options.skip_browser,
             launch_timeout_secs: options.launch_timeout_secs,
             browser_timeout_secs: options.browser_timeout_secs,
+            // 回归验证保持单次采样:验证求确定性,不求检出并集。
+            samples: 0,
         },
         &noop_progress,
     )

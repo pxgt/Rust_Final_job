@@ -378,7 +378,14 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 - **修复成功的"原谅"语义**:第一次执行中已修复场景的失败动作降为 Info 诊断(带 repaired 标注),整体 success 以修复后场景结果为准(fatal 除外);ScenarioResult 新增 `repaired` 字段。修复失败保留原始失败证据。
 - 真机 e2e(真 sidecar + demo 服务 + 顺序应答假 LLM)双向验证:①操作失败→修复→重执行通过,repaired=true、execution.success=true、LLM 恰 2 次调用;②断言失败→不触发修复(LLM 恰 1 次调用)、缺陷证据原样保留。
 - 94 单测(+5:3 分类 + 2 护栏)+ 8 集成全过,严格 Clippy 无警告。
-- 待做:多次采样取一致;真实 LLM 对 FocusBoard 检出率稳定性验收(达标才合 main)。
+
+**同日:多次采样取一致(1.8 第二块)**
+- `--samples N`(1~3,check/review/browser):`generate_scenarios` 增 `variant: Option<(round,total)>`,prompt 注入轮次标记(区分缓存键——温度 0 下同 prompt 会命中缓存返回相同样本——并引导本轮独立设计);每轮独立生成/执行/修复(`run_scenario_sample`)。
+- 合并规则 `merge_sample_results`:**检出并集**——任一轮失败即判失败并保留该轮证据(标题/步骤/截图),已失败不被后续轮通过"洗白";新需求结果直接加入。首轮证据为主证据,后续轮 run_dir 记入诊断。
+- 依据:真机验收观察到的波动全是漏检方向(漏步骤/编造 expect_hidden 目标致假通过/断言强度回退),故取检出上界;误报侧由 2.5 审批指纹持久兜底。
+- 真机 e2e(--samples 2,顺序假 LLM):弱断言轮通过+强断言轮失败 → 合并判失败附强断言轮证据,"union of detections" 诊断,恰 2 次生成调用。
+- 95 单测(+1 合并)+ 8 集成全过,严格 Clippy 无警告。
+- 待做:真实 LLM 对 FocusBoard 检出率稳定性验收(达标才合 main)。
 
 ### 2026-07-12（里程碑 v0.9.0 与 Phase 1.8 启动决策)
 

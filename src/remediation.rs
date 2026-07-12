@@ -148,6 +148,7 @@ pub async fn generate_remediation_report(
             skip_browser: options.skip_browser,
             launch_timeout_secs: options.launch_timeout_secs,
             browser_timeout_secs: options.browser_timeout_secs,
+            samples: 0,
         },
     )
     .await?;

@@ -34,12 +34,15 @@ pub struct ScenarioPlan {
 }
 
 /// 用 LLM 生成场景。Mock Provider 返回空计划(调用方据此退回通用采集)。
+/// `variant` 为多次采样的轮次标记(ROADMAP 1.8):注入 prompt 以区分缓存键并
+/// 驱动样本多样性;单次生成传 None,行为与原先完全一致。
 pub async fn generate_scenarios(
     report: &RequirementReport,
     snapshot: &PageSnapshot,
     base_url: &str,
     provider: AiProviderKind,
     cache_dir: Option<PathBuf>,
+    variant: Option<(u32, u32)>,
 ) -> Result<ScenarioPlan, AiError> {
     let Some(protocol) = chat_protocol_for(provider)? else {
         return Ok(ScenarioPlan {
@@ -53,7 +56,7 @@ pub async fn generate_scenarios(
         });
     };
     let cache = cache_dir.map(|dir| AiCache { dir });
-    let messages = build_messages(report, snapshot);
+    let messages = build_messages(report, snapshot, variant);
     let base_url = base_url.to_owned();
 
     let (parsed, transport) =
@@ -439,10 +442,21 @@ fn to_action(
     }
 }
 
-fn build_messages(report: &RequirementReport, snapshot: &PageSnapshot) -> Vec<Value> {
+fn build_messages(
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    variant: Option<(u32, u32)>,
+) -> Vec<Value> {
+    let mut user = user_prompt(report, snapshot);
+    if let Some((round, total)) = variant {
+        // 采样轮次标记:区分缓存键,并引导本轮独立设计(降低单次生成波动的影响)。
+        user.push_str(&format!(
+            "\nSampling round {round} of {total}: design the scenarios independently from other rounds; when a requirement allows multiple reasonable interaction paths or assertion targets, prefer one you have not tried in earlier rounds.\n"
+        ));
+    }
     vec![
         json!({"role": "system", "content": system_prompt()}),
-        json!({"role": "user", "content": user_prompt(report, snapshot)}),
+        json!({"role": "user", "content": user}),
     ]
 }
 
@@ -725,6 +739,7 @@ mod tests {
             &snapshot,
             "http://127.0.0.1:4173",
             AiProviderKind::Mock,
+            None,
             None,
         )
         .await

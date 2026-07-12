@@ -27,10 +27,13 @@ const PER_ACTION_BUDGET_SECS: u64 = 7;
 const MAX_RUN_SECS: u64 = 180;
 
 /// 浏览器执行选项:选择 AI Provider(非 Mock 时生成具体交互场景)与缓存目录。
+/// `samples`:场景生成/执行的采样轮数(ROADMAP 1.8),0/1 单次,上限 3;
+/// 多轮时按需求取检出并集(任一轮断言失败即判失败,附该轮证据)。
 #[derive(Debug, Clone, Default)]
 pub struct BrowserOptions {
     pub provider: AiProviderKind,
     pub cache_dir: Option<PathBuf>,
+    pub samples: u32,
 }
 
 #[derive(Debug, Error)]
@@ -309,7 +312,18 @@ fn probe_actions(base_url: &str) -> Vec<PlaywrightAction> {
     ]
 }
 
+/// 一轮场景采样的产物:各需求判定、执行证据、被修复原谅的动作下标。
+struct SampleRun {
+    results: Vec<ScenarioResult>,
+    evidence: PlaywrightEvidence,
+    forgiven: std::collections::HashSet<usize>,
+    fatal_free: bool,
+}
+
 /// 基于 DOM 摘要用 LLM 生成场景并执行。生成为空或执行失败返回 None(退回探针结果)。
+/// `options.samples` > 1 时多轮采样并按需求取检出并集(ROADMAP 1.8):
+/// 任一轮断言失败即判失败并保留该轮证据——真机观察到的波动都是漏检方向,
+/// 并集把"看运气 3~4/5"收敛为稳定的检出上界。
 async fn enhance_with_scenarios(
     location: &RunnerLocation,
     base_url: &str,
@@ -318,12 +332,101 @@ async fn enhance_with_scenarios(
     options: &BrowserOptions,
     diagnostics: &mut Vec<BrowserDiagnostic>,
 ) -> Option<ExecutionOutcome> {
+    let total = options.samples.clamp(1, 3).max(1);
+    let mut samples: Vec<SampleRun> = Vec::new();
+    for round in 1..=total {
+        let variant = (total > 1).then_some((round, total));
+        match run_scenario_sample(
+            location,
+            base_url,
+            report,
+            snapshot,
+            options,
+            diagnostics,
+            variant,
+        )
+        .await
+        {
+            Some(sample) => samples.push(sample),
+            // 首轮失败退回探针结果(与单次行为一致);后续轮失败仅告警继续。
+            None if samples.is_empty() => return None,
+            None => diagnostics.push(BrowserDiagnostic {
+                severity: BrowserDiagnosticSeverity::Warning,
+                message: format!("Sampling round {round} produced no result; continuing."),
+            }),
+        }
+    }
+
+    let mut iterator = samples.into_iter();
+    let first = iterator.next()?;
+    let mut merged = first.results;
+    let mut fatal_free = first.fatal_free;
+    for (offset, sample) in iterator.enumerate() {
+        let round = offset + 2;
+        fatal_free = fatal_free && sample.fatal_free;
+        diagnostics.push(BrowserDiagnostic {
+            severity: BrowserDiagnosticSeverity::Info,
+            message: format!(
+                "Sampling round {round} evidence: {}.",
+                sample.evidence.run_dir
+            ),
+        });
+        merge_sample_results(&mut merged, sample.results, round, diagnostics);
+    }
+
+    let mut outcome = finish_playwright_with(first.evidence, merged, diagnostics, &first.forgiven);
+    // 场景整体成功 = 各轮 sidecar 无 fatal 且合并后每个场景所有步骤通过。
+    outcome.success = fatal_free && outcome.scenarios.iter().all(|scenario| scenario.success);
+    Some(outcome)
+}
+
+/// 检出并集合并:后续轮的失败覆盖此前的通过(附该轮证据);新需求的结果直接加入。
+/// 已失败的判定不会被后续轮的通过"洗白"。
+fn merge_sample_results(
+    merged: &mut Vec<ScenarioResult>,
+    incoming: Vec<ScenarioResult>,
+    round: usize,
+    diagnostics: &mut Vec<BrowserDiagnostic>,
+) {
+    for result in incoming {
+        match merged
+            .iter_mut()
+            .find(|existing| existing.requirement_id == result.requirement_id)
+        {
+            Some(slot) => {
+                if !result.success && slot.success {
+                    diagnostics.push(BrowserDiagnostic {
+                        severity: BrowserDiagnosticSeverity::Info,
+                        message: format!(
+                            "Scenario for {} passed earlier but failed in sampling round {round}; reporting the failure (union of detections).",
+                            result.requirement_id
+                        ),
+                    });
+                    *slot = result;
+                }
+            }
+            None => merged.push(result),
+        }
+    }
+}
+
+/// 单轮采样:生成 → 执行 → 修复回路 → 计算被原谅的动作下标。
+async fn run_scenario_sample(
+    location: &RunnerLocation,
+    base_url: &str,
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    options: &BrowserOptions,
+    diagnostics: &mut Vec<BrowserDiagnostic>,
+    variant: Option<(u32, u32)>,
+) -> Option<SampleRun> {
     let plan = match generate_scenarios(
         report,
         snapshot,
         base_url,
         options.provider,
         options.cache_dir.clone(),
+        variant,
     )
     .await
     {
@@ -381,10 +484,12 @@ async fn enhance_with_scenarios(
         .flat_map(|(_, &(start, end))| start..end)
         .collect();
     let fatal_free = evidence.outcome.fatal.is_none();
-    let mut outcome = finish_playwright_with(evidence, scenarios, diagnostics, &forgiven);
-    // 场景整体成功 = sidecar 无 fatal 且每个场景(含修复后)所有步骤通过。
-    outcome.success = fatal_free && outcome.scenarios.iter().all(|scenario| scenario.success);
-    Some(outcome)
+    Some(SampleRun {
+        results: scenarios,
+        evidence,
+        forgiven,
+        fatal_free,
+    })
 }
 
 /// 从执行结果中甄别"坏场景":第一个失败步骤是操作类且确实执行过(有失败详情)。
@@ -1065,6 +1170,30 @@ mod tests {
 
         let broken = collect_broken_scenarios(&scenarios, &results, &[(0, 5)], &outcome);
         assert!(broken.is_empty());
+    }
+
+    #[test]
+    fn sampling_merge_takes_union_of_detections() {
+        let mut diagnostics = Vec::new();
+        // 第 1 轮 REQ-001 通过;第 2 轮失败 → 失败覆盖通过(检出并集)。
+        let mut merged = vec![result_with(vec![(true, Some("ok"))])];
+        let mut failing = result_with(vec![(false, Some("assert failed"))]);
+        failing.title = "第二轮".to_owned();
+        super::merge_sample_results(&mut merged, vec![failing], 2, &mut diagnostics);
+        assert!(!merged[0].success);
+        assert_eq!(merged[0].title, "第二轮");
+        assert!(diagnostics.iter().any(|d| d.message.contains("union")));
+
+        // 已失败的判定不被后续轮的通过"洗白";新需求直接加入。
+        let mut passing = result_with(vec![(true, Some("ok"))]);
+        passing.title = "第三轮".to_owned();
+        let mut new_req = result_with(vec![(true, Some("ok"))]);
+        new_req.requirement_id = "REQ-002".to_owned();
+        super::merge_sample_results(&mut merged, vec![passing, new_req], 3, &mut diagnostics);
+        assert!(!merged[0].success);
+        assert_eq!(merged[0].title, "第二轮");
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[1].requirement_id, "REQ-002");
     }
 
     #[test]
