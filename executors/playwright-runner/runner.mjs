@@ -59,6 +59,20 @@ async function collectSnapshot(page) {
         });
         if (items.length >= 60) break;
       }
+      // 带 id 的地标元素(横幅/列表/统计等非交互节点):断言的可靠目标。
+      // 不提供它们时,LLM 只能猜类名(如 .error-banner)导致误报(ROADMAP 1.8)。
+      const landmarks = document.querySelectorAll("[id]");
+      for (const el of landmarks) {
+        if (items.length >= 80) break;
+        const sel = `#${el.id}`;
+        if (items.some((item) => item.selector === sel)) continue;
+        items.push({
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute("role") || el.tagName.toLowerCase(),
+          text: (el.innerText || "").trim().slice(0, 80),
+          selector: sel,
+        });
+      }
       return items;
     })
     .catch(() => []);
