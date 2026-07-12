@@ -160,7 +160,7 @@
 | 3.2 | 安全应用 ✅ 已完成(2026-07-12) | `fix <ISSUE-ID> --apply [--allow-dirty]`(`src/apply.rs`):前置校验项目为 git 仓库 + 工作区干净(否则 `--allow-dirty` 豁免);应用前展示 diff 并终端确认(非 TTY/EOF/非 y 一律拒绝)。创建隔离分支 `specprobe/fix-<issue>` → `git apply --index` → 在该分支提交 → **切回用户原分支**,绝不碰当前分支工作区;任何一步失败自动回滚(切回原分支 + 删除新分支)。分支已存在则拒绝。真机验证 apply/abort/branch-exists/dirty/non-git 全路径 |
 | 3.3 | 自动回归闭环 ✅ 已完成(2026-07-12) | `fix --apply --verify`(`src/regression.rs`):用 `git worktree` 把修复分支物化到临时目录(不碰用户工作区)→ 按 baseline 配置重跑评审 → 按 Issue 指纹对比修复前后。目标缺陷消失且无新增问题 → `verified`;否则自动回滚(删除分支)并列出仍在/新增指纹。纯裁决 `evaluate` + 编排 `verify_on_branch` 分离,均独立测试(需求质量缺陷作确定性载体,无需运行时)。CLI 真机验证 verified(留分支)/ failed(回滚)双路径。**遗留**:代码级缺陷的验证需在 worktree 内真实启动应用(依赖项目运行时/依赖),这部分沿用 FocusBoard 手工验收 |
 | 3.4 | 安全强化 ✅ 已完成(2026-07-12) | ①启动命令确认记忆:`check` 确认过的启动命令按"项目+命令"存入 SQLite(`approved_commands`),下次同项目同命令免再确认(变更命令重新询问);②AI 出站脱敏:所有发给 LLM 的消息在单一出站入口 `run_chat_json` 过密钥脱敏(`src/redact.rs`,敏感键的值 + sk-/ghp_ 等已知令牌前缀);③威胁模型文档 [docs/THREAT_MODEL.md](THREAT_MODEL.md)。真机验证命令记忆(首次提示→记住→二次免提示) |
-| 3.5 | 稳定性 | 浏览器动作失败自动重试一次 + 二次截图对比(抗 flaky);Playwright trace 归档;sidecar 崩溃恢复 |
+| 3.5 | 稳定性 ✅ 已完成(2026-07-12) | ①动作失败重试一次(仅时序敏感动作 click/fill/expect_* 等,goto/screenshot 不重试),`action_result` 带 `attempts`,二次仍失败抓失败截图作证据;②**Playwright trace 归档**(runner tracing.start/stop → trace.zip 落到 run 证据目录,`trace` 事件回传路径 → `outcome.trace_path`);③**sidecar 崩溃恢复**:事件流无 finished/fatal 时 Rust 合成 fatal("possible sidecar crash"),崩溃变显式高severity失败而非静默未完成。协议保持 v1(新增向后兼容)。真机 sidecar 验证 retry/失败截图/trace.zip 落盘 |
 
 **验收门**:对 FocusBoard 的空输入校验缺陷,端到端完成"诊断 → 提案 → 用户 accept → 应用到分支 → 回归验证通过"且统计/筛选用例无回归。
 

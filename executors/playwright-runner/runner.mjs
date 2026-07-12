@@ -124,6 +124,52 @@ async function runAction(page, action, index, timeout, screenshotDir) {
   }
 }
 
+// 时序敏感、可能 flaky 的动作:失败后重试一次(抗 flaky,ROADMAP 3.5)。
+// goto/screenshot/eval 不重试(导航与快照不因抖动而暂时失败)。
+const RETRIABLE_ACTIONS = new Set([
+  "wait_for_selector",
+  "click",
+  "fill",
+  "press",
+  "expect_visible",
+  "expect_hidden",
+  "expect_text",
+]);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 执行动作;失败且可重试则等待后再试一次。返回 { ok, detail, path, attempts }。
+async function runActionWithRetry(page, action, index, timeout, screenshotDir) {
+  try {
+    const result = await runAction(page, action, index, timeout, screenshotDir);
+    return { ok: true, detail: result.detail ?? null, path: result.path ?? null, attempts: 1 };
+  } catch (first) {
+    if (!RETRIABLE_ACTIONS.has(action.type)) {
+      return { ok: false, detail: first.message, path: null, attempts: 1 };
+    }
+    await sleep(500);
+    try {
+      const result = await runAction(page, action, index, timeout, screenshotDir);
+      return {
+        ok: true,
+        detail: `${result.detail ?? "ok"} (passed on retry)`,
+        path: result.path ?? null,
+        attempts: 2,
+      };
+    } catch (second) {
+      // 二次仍失败:抓一张失败截图作证据(截图本身失败不影响主流程)。
+      let path = null;
+      try {
+        path = `${screenshotDir}/failure-${index}.png`;
+        await page.screenshot({ path, fullPage: true });
+      } catch {
+        path = null;
+      }
+      return { ok: false, detail: second.message, path, attempts: 2 };
+    }
+  }
+}
+
 async function main() {
   const raw = await readStdin();
   let plan;
@@ -161,10 +207,15 @@ async function main() {
 
   const timeout = Number(plan.timeout_ms) || 10000;
   let browser;
+  let context;
   let allOk = true;
   try {
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
+    context = await browser.newContext();
+    // 录制 trace 供事后排查(ROADMAP 3.5);tracing 失败不影响主流程。
+    await context.tracing
+      .start({ screenshots: true, snapshots: true })
+      .catch(() => {});
     const page = await context.newPage();
 
     page.on("console", (message) => {
@@ -190,33 +241,23 @@ async function main() {
     const actions = Array.isArray(plan.actions) ? plan.actions : [];
     for (let index = 0; index < actions.length; index += 1) {
       const action = actions[index];
-      try {
-        const result = await runAction(
-          page,
-          action,
-          index,
-          timeout,
-          plan.screenshot_dir,
-        );
-        emit({
-          type: "action_result",
-          index,
-          action: action.type,
-          ok: true,
-          detail: result.detail ?? null,
-          path: result.path ?? null,
-        });
-      } catch (error) {
-        allOk = false;
-        emit({
-          type: "action_result",
-          index,
-          action: action.type,
-          ok: false,
-          detail: error.message,
-          path: null,
-        });
-      }
+      const result = await runActionWithRetry(
+        page,
+        action,
+        index,
+        timeout,
+        plan.screenshot_dir,
+      );
+      if (!result.ok) allOk = false;
+      emit({
+        type: "action_result",
+        index,
+        action: action.type,
+        ok: result.ok,
+        detail: result.detail,
+        path: result.path,
+        attempts: result.attempts,
+      });
     }
 
     const snapshot = await collectSnapshot(page);
@@ -225,6 +266,16 @@ async function main() {
     allOk = false;
     emit({ type: "fatal", message: String(error?.message ?? error) });
   } finally {
+    // 归档 trace(ROADMAP 3.5),再关浏览器;两步失败都不影响已产出的证据。
+    if (context) {
+      try {
+        const tracePath = `${plan.screenshot_dir}/trace.zip`;
+        await context.tracing.stop({ path: tracePath });
+        emit({ type: "trace", path: tracePath });
+      } catch {
+        // tracing 不可用或写入失败:忽略
+      }
+    }
     if (browser) await browser.close().catch(() => {});
   }
 

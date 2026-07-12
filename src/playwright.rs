@@ -135,6 +135,9 @@ enum RunnerEvent {
         detail: Option<String>,
         #[serde(default)]
         path: Option<String>,
+        /// 执行尝试次数(重试一次抗 flaky);缺省视为 1(ROADMAP 3.5)。
+        #[serde(default)]
+        attempts: Option<u32>,
     },
     Console {
         level: String,
@@ -156,6 +159,10 @@ enum RunnerEvent {
         #[serde(default)]
         interactive: Vec<InteractiveElement>,
     },
+    /// Playwright trace 归档路径(ROADMAP 3.5)。
+    Trace {
+        path: String,
+    },
     Finished {
         ok: bool,
     },
@@ -176,6 +183,8 @@ pub struct PlaywrightOutcome {
     pub network_failures: Vec<NetworkFailure>,
     pub page_errors: Vec<String>,
     pub snapshot: Option<PageSnapshot>,
+    /// 归档的 Playwright trace.zip 路径(ROADMAP 3.5)。
+    pub trace_path: Option<String>,
     pub finished_ok: Option<bool>,
     pub fatal: Option<String>,
 }
@@ -194,6 +203,8 @@ pub struct ActionOutcome {
     pub ok: bool,
     pub detail: Option<String>,
     pub screenshot_path: Option<String>,
+    /// 执行尝试次数;>1 表示重试后才定案(抗 flaky,ROADMAP 3.5)。
+    pub attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -380,12 +391,14 @@ fn build_outcome(lines: &[String]) -> PlaywrightOutcome {
                 ok,
                 detail,
                 path,
+                attempts,
             } => outcome.actions.push(ActionOutcome {
                 index,
                 action,
                 ok,
                 detail,
                 screenshot_path: path,
+                attempts: attempts.unwrap_or(1).max(1),
             }),
             RunnerEvent::Console { level, text } => {
                 outcome.console.push(ConsoleMessage { level, text })
@@ -403,10 +416,19 @@ fn build_outcome(lines: &[String]) -> PlaywrightOutcome {
             RunnerEvent::Snapshot { title, interactive } => {
                 outcome.snapshot = Some(PageSnapshot { title, interactive })
             }
+            RunnerEvent::Trace { path } => outcome.trace_path = Some(path),
             RunnerEvent::Finished { ok } => outcome.finished_ok = Some(ok),
             RunnerEvent::Fatal { message } => outcome.fatal = Some(message),
             RunnerEvent::Unknown => {}
         }
+    }
+
+    // sidecar 崩溃恢复(ROADMAP 3.5):事件流既无 finished 也无 fatal,说明 runner
+    // 中途退出(崩溃 / 被杀)。把它显式记为 fatal,让调用方当作高severity失败,
+    // 而不是静默地"未完成"。
+    if outcome.finished_ok.is_none() && outcome.fatal.is_none() {
+        outcome.fatal =
+            Some("runner ended without a finish event (possible sidecar crash)".to_owned());
     }
 
     outcome
@@ -458,10 +480,13 @@ mod tests {
                 .to_owned(),
             r#"{"type":"console","level":"error","text":"Task API returned HTTP 500"}"#.to_owned(),
             r#"{"type":"network_failed","url":"http://x/api/tasks","status":500}"#.to_owned(),
-            r#"{"type":"action_result","index":1,"action":"screenshot","ok":true,"path":"/tmp/run/home.png"}"#
+            r#"{"type":"action_result","index":1,"action":"expect_visible","ok":true,"detail":"visible (passed on retry)","attempts":2}"#
+                .to_owned(),
+            r#"{"type":"action_result","index":2,"action":"screenshot","ok":true,"path":"/tmp/run/home.png"}"#
                 .to_owned(),
             r##"{"type":"snapshot","title":"FocusBoard","interactive":[{"tag":"button","role":"button","text":"添加任务","selector":"#add-task-btn"}]}"##
                 .to_owned(),
+            r#"{"type":"trace","path":"/tmp/run/trace.zip"}"#.to_owned(),
             r#"{"type":"finished","ok":true}"#.to_owned(),
         ];
 
@@ -469,9 +494,12 @@ mod tests {
 
         assert!(outcome.started);
         assert_eq!(outcome.protocol_version, Some(1));
-        assert_eq!(outcome.actions.len(), 2);
+        assert_eq!(outcome.actions.len(), 3);
+        // 无 attempts 字段默认 1;重试过的动作 attempts=2。
+        assert_eq!(outcome.actions[0].attempts, 1);
+        assert_eq!(outcome.actions[1].attempts, 2);
         assert_eq!(
-            outcome.actions[1].screenshot_path.as_deref(),
+            outcome.actions[2].screenshot_path.as_deref(),
             Some("/tmp/run/home.png")
         );
         assert_eq!(outcome.console.len(), 1);
@@ -480,8 +508,30 @@ mod tests {
         let snapshot = outcome.snapshot.as_ref().expect("snapshot present");
         assert_eq!(snapshot.title.as_deref(), Some("FocusBoard"));
         assert_eq!(snapshot.interactive[0].selector, "#add-task-btn");
+        assert_eq!(outcome.trace_path.as_deref(), Some("/tmp/run/trace.zip"));
         assert_eq!(outcome.finished_ok, Some(true));
         assert!(outcome.success());
+    }
+
+    #[test]
+    fn flags_missing_finish_as_crash() {
+        // runner 启动并跑了一步,但没有 finished/fatal → 视为中途崩溃。
+        let lines = vec![
+            r#"{"type":"started","protocol_version":1}"#.to_owned(),
+            r#"{"type":"action_result","index":0,"action":"goto","ok":true}"#.to_owned(),
+        ];
+
+        let outcome = build_outcome(&lines);
+
+        assert!(outcome.started);
+        assert!(outcome.finished_ok.is_none());
+        assert!(
+            outcome
+                .fatal
+                .as_deref()
+                .is_some_and(|message| message.contains("crash"))
+        );
+        assert!(!outcome.success());
     }
 
     #[test]

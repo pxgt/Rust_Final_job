@@ -35,7 +35,7 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 
 ## 当前状态与边界(如实声明)
 
-Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)进行中:一键 `check` 与 HTML 报告已完成。
+Phase 1(真实化)已完成并通过端到端真机验收(DeepSeek + Chromium):FocusBoard 5 个注入缺陷检出 3~4/5(基线 1/5,LLM 场景生成有单次波动),API 500 缺陷经 LLM 诊断精确定位到 `server.js:47`,详见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。Phase 2(易用性)、Phase 3(修复闭环:补丁生成 → 安全应用隔离分支 → 回归验证 → 安全强化 → 稳定性)均已完成。浏览器执行支持失败重试(抗 flaky)、Playwright trace 归档与 sidecar 崩溃识别。
 
 Phase 2(易用性)已完成:一键 `check`、`specprobe.toml` 配置、进度条、运行归档 + SQLite、审批持久化。**Phase 3(修复闭环)已完成**:3.1 真补丁生成 + 3.2 安全应用到隔离分支 + 3.3 自动回归验证(`fix --apply --verify`),端到端"诊断 → 生成补丁 → 应用到隔离分支 → 回归验证"闭环打通。检出率的稳定提升需要场景执行级修复回路,见 [docs/ROADMAP.md](docs/ROADMAP.md) 1.8 遗留。CI 在 Linux / Windows / macOS 三平台验证。
 
