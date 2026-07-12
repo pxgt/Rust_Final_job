@@ -159,7 +159,7 @@
 | 3.1 | 真补丁生成 ✅ 已完成(2026-07-11) | `specprobe fix <ISSUE-ID> [--run] --provider <p>`:从归档 report.json 取 issue + 诊断源码定位 → LLM 读源文件全文 → 输出 unified diff(`src/patch.rs`)。硬约束落进 `run_chat_json` 的 parse 回路:只允许修改提供的文件、diff 必须过 `git apply --check`(经 stdin,`--recount`,无需 git 仓库),不过则带反馈自动重问。真机(fake OpenAI 端点)验证读报告→生成→校验→打印全链路;git apply "corrupt patch"(补丁无末尾换行)已修。**仅生成不应用**(应用属 3.2)|
 | 3.2 | 安全应用 ✅ 已完成(2026-07-12) | `fix <ISSUE-ID> --apply [--allow-dirty]`(`src/apply.rs`):前置校验项目为 git 仓库 + 工作区干净(否则 `--allow-dirty` 豁免);应用前展示 diff 并终端确认(非 TTY/EOF/非 y 一律拒绝)。创建隔离分支 `specprobe/fix-<issue>` → `git apply --index` → 在该分支提交 → **切回用户原分支**,绝不碰当前分支工作区;任何一步失败自动回滚(切回原分支 + 删除新分支)。分支已存在则拒绝。真机验证 apply/abort/branch-exists/dirty/non-git 全路径 |
 | 3.3 | 自动回归闭环 ✅ 已完成(2026-07-12) | `fix --apply --verify`(`src/regression.rs`):用 `git worktree` 把修复分支物化到临时目录(不碰用户工作区)→ 按 baseline 配置重跑评审 → 按 Issue 指纹对比修复前后。目标缺陷消失且无新增问题 → `verified`;否则自动回滚(删除分支)并列出仍在/新增指纹。纯裁决 `evaluate` + 编排 `verify_on_branch` 分离,均独立测试(需求质量缺陷作确定性载体,无需运行时)。CLI 真机验证 verified(留分支)/ failed(回滚)双路径。**遗留**:代码级缺陷的验证需在 worktree 内真实启动应用(依赖项目运行时/依赖),这部分沿用 FocusBoard 手工验收 |
-| 3.4 | 安全强化 | 启动命令白名单 + 首次确认后记忆(SQLite);AI 出站 payload 脱敏审计(现有日志脱敏扩展到所有出站内容);文档化威胁模型 |
+| 3.4 | 安全强化 ✅ 已完成(2026-07-12) | ①启动命令确认记忆:`check` 确认过的启动命令按"项目+命令"存入 SQLite(`approved_commands`),下次同项目同命令免再确认(变更命令重新询问);②AI 出站脱敏:所有发给 LLM 的消息在单一出站入口 `run_chat_json` 过密钥脱敏(`src/redact.rs`,敏感键的值 + sk-/ghp_ 等已知令牌前缀);③威胁模型文档 [docs/THREAT_MODEL.md](THREAT_MODEL.md)。真机验证命令记忆(首次提示→记住→二次免提示) |
 | 3.5 | 稳定性 | 浏览器动作失败自动重试一次 + 二次截图对比(抗 flaky);Playwright trace 归档;sidecar 崩溃恢复 |
 
 **验收门**:对 FocusBoard 的空输入校验缺陷,端到端完成"诊断 → 提案 → 用户 accept → 应用到分支 → 回归验证通过"且统计/筛选用例无回归。

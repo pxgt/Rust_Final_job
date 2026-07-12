@@ -29,6 +29,7 @@ specprobe check .\你的Web项目 --base-url http://127.0.0.1:3000
 - `specprobe propose <PATH>`:把问题清单转换为修复提案、补丁预览和回归检查清单。
 - `specprobe runs list` / `runs show <id>`:浏览归档的历史运行(`.specprobe/specprobe.db`)。
 - `specprobe issues list` / `show <ID>` / `accept|reject|ignore <ID> [--note]`:审批问题。审批按 Issue 指纹跨运行持久——重跑时同一问题继承之前的决定,被 `ignore` 的默认不再出现(`--all` 显示)。
+- 安全:发给 LLM 的所有内容在出站前做**密钥脱敏**(不外泄 API key/token);`check` 确认过的启动命令按项目**记忆**,同项目同命令下次免再确认。威胁模型见 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)。
 - `specprobe fix <ISSUE-ID> --provider <p> [--apply]`:对已诊断的问题生成修复补丁。从归档运行读取问题与诊断的源码定位,交给 LLM 产出 unified diff,并强制只改被诊断的文件、且必须通过 `git apply --check`(不过则带反馈重问)。默认只生成并展示;加 `--apply` 时,先终端确认,再把补丁提交到**隔离分支** `specprobe/fix-<issue>`(前置项目 git 工作区干净,否则需 `--allow-dirty`),提交后切回你的原分支——绝不改动当前分支,失败自动回滚。再加 `--verify` 时,应用后用 `git worktree` 把修复分支物化重跑评审,按 Issue 指纹对比:目标缺陷消失且无新增问题 → 报"验证通过"保留分支;否则自动回滚分支并列出仍在/新增的问题。之后用 `git diff <原分支>..specprobe/fix-<issue>` 审阅再决定合并。
 - 以上命令均支持 `--json`,供 AI 工作流和 CI 读取。
 

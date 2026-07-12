@@ -93,6 +93,13 @@ pub fn open(base_dir: &Path) -> Result<Store, StoreError> {
             state         TEXT NOT NULL,
             note          TEXT,
             updated_at_ms INTEGER NOT NULL
+        );
+        -- 用户确认过的启动命令(按项目 + 命令),下次同项目同命令免再确认(ROADMAP 3.4)。
+        CREATE TABLE IF NOT EXISTS approved_commands (
+            project_root   TEXT NOT NULL,
+            command        TEXT NOT NULL,
+            approved_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (project_root, command)
         );",
     )?;
     Ok(Store {
@@ -292,6 +299,29 @@ impl Store {
         })?;
         Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
     }
+
+    /// 记住某项目下某启动命令已被用户确认(下次同项目同命令免再确认)。
+    pub fn approve_command(&self, project_root: &str, command: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO approved_commands (project_root, command, approved_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(project_root, command) DO UPDATE SET approved_at_ms = ?3",
+            rusqlite::params![project_root, command, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// 该项目下该启动命令是否已被确认过。
+    pub fn is_command_approved(
+        &self,
+        project_root: &str,
+        command: &str,
+    ) -> Result<bool, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT 1 FROM approved_commands WHERE project_root = ?1 AND command = ?2 LIMIT 1",
+        )?;
+        Ok(statement.exists(rusqlite::params![project_root, command])?)
+    }
 }
 
 /// Issue 指纹:类别 + 关联需求 + 标题的稳定 hash,用于跨 run 识别"同一个问题"。
@@ -457,6 +487,22 @@ mod tests {
             .find(|issue| issue.fingerprint == fingerprint)
             .expect("same fingerprint present");
         assert_eq!(same.approval, "accepted");
+
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn remembers_approved_launch_commands_per_project() {
+        let root = temp_project("specprobe-cmd-approval");
+        let store = open(&root.join(".specprobe")).expect("open store");
+
+        assert!(!store.is_command_approved("proj-a", "npm run dev").unwrap());
+        store.approve_command("proj-a", "npm run dev").unwrap();
+        assert!(store.is_command_approved("proj-a", "npm run dev").unwrap());
+        // 按项目 + 命令区分:同命令不同项目、同项目不同命令都不算已批准。
+        assert!(!store.is_command_approved("proj-b", "npm run dev").unwrap());
+        assert!(!store.is_command_approved("proj-a", "npm start").unwrap());
 
         drop(store);
         fs::remove_dir_all(root).expect("cleanup");

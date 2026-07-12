@@ -346,12 +346,25 @@ pub(crate) fn chat_protocol_for(kind: AiProviderKind) -> Result<Option<ChatProto
 
 /// 通用的"聊天 → JSON 输出"循环:缓存、传输重试、schema 校验反馈重问。
 /// `parse(content, lenient)` 负责解析与校验;lenient 在最后一轮为 true。
+/// 对所有消息的 content 字段做出站脱敏(密钥不外发给第三方 LLM)。
+fn redact_messages(mut messages: Vec<Value>) -> Vec<Value> {
+    for message in &mut messages {
+        if let Some(content) = message.get("content").and_then(Value::as_str) {
+            let redacted = crate::redact::redact_secrets(content);
+            message["content"] = Value::String(redacted);
+        }
+    }
+    messages
+}
+
 pub(crate) async fn run_chat_json<T>(
     protocol: &ChatProtocol,
     base_messages: Vec<Value>,
     cache: Option<&AiCache>,
     parse: impl Fn(&str, bool) -> Result<T, String>,
 ) -> Result<(T, AiTransportInfo), AiError> {
+    // 出站脱敏:发送给外部 LLM 的所有内容先过一遍密钥脱敏(ROADMAP 3.4)。
+    let base_messages = redact_messages(base_messages);
     let key = cache_key(
         protocol.provider,
         &protocol.endpoint,

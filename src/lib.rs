@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod output;
 pub mod patch;
 pub mod playwright;
+pub mod redact;
 pub mod refine;
 pub mod regression;
 pub mod remediation;
@@ -35,7 +36,7 @@ fn cache_dir_unless(no_cache: bool) -> Option<std::path::PathBuf> {
 /// 真实终端确认:stderr 提问,stdin 读一行;非 TTY / EOF / 非 y 一律拒绝。
 fn confirm_on_terminal(message: &str) -> bool {
     use std::io::{BufRead, Write, stderr, stdin};
-    eprint!("{message} Apply? [y/N] ");
+    eprint!("{message} [y/N] ");
     let _ = stderr().flush();
     let mut line = String::new();
     if stdin().lock().read_line(&mut line).is_err() {
@@ -219,7 +220,29 @@ pub async fn run() -> Result<()> {
             )?;
             let progress = ui::Progress::spinner(!json);
             let stage = progress.stage_fn();
-            let report = check::run_check(
+            // 启动命令确认记忆(ROADMAP 3.4):同项目同命令确认过一次后免再确认。
+            let project_key = std::fs::canonicalize(&path)
+                .map(|resolved| resolved.display().to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+            let command_store = storage::open(&std::path::PathBuf::from(".specprobe")).ok();
+            let confirm = |message: &str| -> bool {
+                if let Some(store) = &command_store
+                    && store
+                        .is_command_approved(&project_key, message)
+                        .unwrap_or(false)
+                {
+                    eprintln!(
+                        "Launch command previously approved for this project; executing without prompt."
+                    );
+                    return true;
+                }
+                let approved = confirm_on_terminal(message);
+                if approved && let Some(store) = &command_store {
+                    let _ = store.approve_command(&project_key, message);
+                }
+                approved
+            };
+            let report = check::run_check_with_progress(
                 check::CheckOptions {
                     path,
                     requirements: settings.requirements,
@@ -230,9 +253,11 @@ pub async fn run() -> Result<()> {
                     launch_timeout_secs: settings.launch_timeout_secs,
                     browser_timeout_secs: settings.browser_timeout_secs,
                 },
+                confirm,
                 &stage,
             )
             .await?;
+            drop(command_store);
             progress.finish();
             if !no_html {
                 if let Some(parent) = html.parent()
