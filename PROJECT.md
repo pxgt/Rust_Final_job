@@ -369,6 +369,17 @@ AI Provider 环境变量约定：OpenAI 兼容端点需要 `OPENAI_API_KEY` + `O
 
 ## 12. 开发日志
 
+### 2026-07-12（Phase 1.8 场景执行级修复回路,分支 phase-1.8-repair-loop)
+
+- **分类规则(防目标冲突的核心设计)**:场景第一个失败步骤是操作类(goto/wait/click/fill/press)→ 场景本身坏了(selector 错/漏步骤),可修复;是断言类(expect_*)→ 这是缺陷证据,绝不修复;步骤未执行(detail=None,前置失败/执行器中断)→ 不修复。`PlaywrightAction::is_assertion` + `collect_broken_scenarios`。
+- **失败证据采集**:runner.mjs 动作最终失败时采集当刻 DOM 快照,发 `failure_snapshot` 事件(带动作下标);Rust `PlaywrightOutcome.failure_snapshots`。协议 v1 向后兼容。
+- **修复回路**(`scenario::repair_scenarios` + `browser::repair_round`):坏场景带失败步骤/错误详情/失败时页面状态回喂 LLM;selector 合法集 = 初始快照 ∪ 失败快照(动态元素);复用 run_chat_json 反馈重问;只重执行修正的场景,按需求 ID 替换结果;一轮上限。
+- **断言强度护栏**(`enforce_assertion_strength`):修复输出的 expect_* 动作类型多重集与 expect_text 断言文本必须与原场景一致,只许修操作步骤与断言 selector;违反则反馈重问。防止修复回路把真缺陷检测"修"掉。
+- **修复成功的"原谅"语义**:第一次执行中已修复场景的失败动作降为 Info 诊断(带 repaired 标注),整体 success 以修复后场景结果为准(fatal 除外);ScenarioResult 新增 `repaired` 字段。修复失败保留原始失败证据。
+- 真机 e2e(真 sidecar + demo 服务 + 顺序应答假 LLM)双向验证:①操作失败→修复→重执行通过,repaired=true、execution.success=true、LLM 恰 2 次调用;②断言失败→不触发修复(LLM 恰 1 次调用)、缺陷证据原样保留。
+- 94 单测(+5:3 分类 + 2 护栏)+ 8 集成全过,严格 Clippy 无警告。
+- 待做:多次采样取一致;真实 LLM 对 FocusBoard 检出率稳定性验收(达标才合 main)。
+
 ### 2026-07-12（里程碑 v0.9.0 与 Phase 1.8 启动决策)
 
 - 用户决策:Phase 4(广度)不做;尝试 Phase 1.8 场景执行级修复回路(深水区,风险高)。

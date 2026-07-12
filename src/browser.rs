@@ -14,7 +14,7 @@ use crate::playwright::{
 use crate::requirements::{
     ExecutorHint, RequirementError, RequirementReport, TestAction, analyze_requirements,
 };
-use crate::scenario::{Scenario, generate_scenarios};
+use crate::scenario::{BrokenScenario, Scenario, generate_scenarios, repair_scenarios};
 
 const BODY_EXCERPT_LIMIT: usize = 2_000;
 /// Playwright 总执行超时的额外缓冲(秒)。
@@ -87,6 +87,8 @@ pub struct ScenarioResult {
     pub expected_observation: String,
     pub success: bool,
     pub screenshot: Option<String>,
+    /// 该结果来自执行级修复回路的第二次执行(原场景操作步骤失败,ROADMAP 1.8)。
+    pub repaired: bool,
     pub steps: Vec<ScenarioStepReport>,
 }
 
@@ -354,11 +356,153 @@ async fn enhance_with_scenarios(
         }
     };
 
-    let scenarios = split_scenario_results(&plan.scenarios, &ranges, &evidence.outcome);
-    let mut outcome = finish_playwright(evidence, scenarios, diagnostics);
-    // 场景整体成功 = sidecar 无 fatal 且每个场景所有步骤通过。
-    outcome.success = outcome.success && outcome.scenarios.iter().all(|scenario| scenario.success);
+    let mut scenarios = split_scenario_results(&plan.scenarios, &ranges, &evidence.outcome);
+    // 执行级修复回路(ROADMAP 1.8,一轮):操作步骤失败的场景带执行证据回喂 LLM
+    // 修正并重执行;断言失败的场景是缺陷证据,原样保留,绝不修复。
+    scenarios = repair_round(
+        location,
+        base_url,
+        report,
+        snapshot,
+        options,
+        &plan.scenarios,
+        scenarios,
+        &ranges,
+        &evidence.outcome,
+        diagnostics,
+    )
+    .await;
+    // 已被成功修复的场景:第一次执行中它区间内的动作失败是"场景缺陷"而非应用缺陷,
+    // 不再作为 Error 诊断与整体失败上报(否则修复回路白修)。
+    let forgiven: std::collections::HashSet<usize> = scenarios
+        .iter()
+        .zip(&ranges)
+        .filter(|(scenario, _)| scenario.repaired && scenario.success)
+        .flat_map(|(_, &(start, end))| start..end)
+        .collect();
+    let fatal_free = evidence.outcome.fatal.is_none();
+    let mut outcome = finish_playwright_with(evidence, scenarios, diagnostics, &forgiven);
+    // 场景整体成功 = sidecar 无 fatal 且每个场景(含修复后)所有步骤通过。
+    outcome.success = fatal_free && outcome.scenarios.iter().all(|scenario| scenario.success);
     Some(outcome)
+}
+
+/// 从执行结果中甄别"坏场景":第一个失败步骤是操作类且确实执行过(有失败详情)。
+/// 断言失败(缺陷证据)与前置 goto/wait 失败(应用不可达)都不修复。
+fn collect_broken_scenarios(
+    plan_scenarios: &[Scenario],
+    results: &[ScenarioResult],
+    ranges: &[(usize, usize)],
+    outcome: &PlaywrightOutcome,
+) -> Vec<BrokenScenario> {
+    let mut broken = Vec::new();
+    for ((scenario, result), &(start, _)) in plan_scenarios.iter().zip(results).zip(ranges) {
+        let Some(offset) = result.steps.iter().position(|step| !step.ok) else {
+            continue;
+        };
+        // detail 为 None 说明该步骤从未执行(前置失败/执行器中断),不是场景缺陷。
+        let Some(detail) = result.steps[offset].detail.clone() else {
+            continue;
+        };
+        if scenario.steps[offset].is_assertion() {
+            continue;
+        }
+        let absolute = start + 2 + offset;
+        let page_at_failure = outcome
+            .failure_snapshots
+            .iter()
+            .find(|snapshot| snapshot.index == absolute)
+            .map(|snapshot| snapshot.snapshot.clone());
+        broken.push(BrokenScenario {
+            scenario: scenario.clone(),
+            failed_step: offset,
+            failed_detail: detail,
+            page_at_failure,
+        });
+    }
+    broken
+}
+
+/// 修复回路编排:甄别坏场景 → LLM 修正 → 只重执行修正的场景 → 按需求 ID 替换结果。
+/// 修复生成失败或重执行失败时保留原始失败结果(证据不丢失)。
+#[allow(clippy::too_many_arguments)]
+async fn repair_round(
+    location: &RunnerLocation,
+    base_url: &str,
+    report: &RequirementReport,
+    snapshot: &PageSnapshot,
+    options: &BrowserOptions,
+    plan_scenarios: &[Scenario],
+    mut results: Vec<ScenarioResult>,
+    ranges: &[(usize, usize)],
+    outcome: &PlaywrightOutcome,
+    diagnostics: &mut Vec<BrowserDiagnostic>,
+) -> Vec<ScenarioResult> {
+    let broken = collect_broken_scenarios(plan_scenarios, &results, ranges, outcome);
+    if broken.is_empty() {
+        return results;
+    }
+
+    let repair_plan = match repair_scenarios(
+        &broken,
+        report,
+        snapshot,
+        base_url,
+        options.provider,
+        options.cache_dir.clone(),
+    )
+    .await
+    {
+        Ok(plan) if !plan.scenarios.is_empty() => plan,
+        Ok(_) => return results,
+        Err(error) => {
+            diagnostics.push(BrowserDiagnostic {
+                severity: BrowserDiagnosticSeverity::Warning,
+                message: format!("Scenario repair failed ({error}); keeping original results."),
+            });
+            return results;
+        }
+    };
+
+    let (actions, repair_ranges) = build_scenario_actions(&repair_plan.scenarios, base_url);
+    let repaired_evidence = match run_in_dir(location, base_url, actions, "scenario-repair").await {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            diagnostics.push(BrowserDiagnostic {
+                severity: BrowserDiagnosticSeverity::Warning,
+                message: format!(
+                    "Repaired scenario execution failed ({error}); keeping original results."
+                ),
+            });
+            return results;
+        }
+    };
+    diagnostics.push(BrowserDiagnostic {
+        severity: BrowserDiagnosticSeverity::Info,
+        message: format!(
+            "Repaired {} scenario(s) after operational step failures and re-executed them (evidence: {}).",
+            repair_plan.scenarios.len(),
+            repaired_evidence.run_dir
+        ),
+    });
+
+    let mut repaired_results = split_scenario_results(
+        &repair_plan.scenarios,
+        &repair_ranges,
+        &repaired_evidence.outcome,
+    );
+    for repaired in &mut repaired_results {
+        repaired.repaired = true;
+    }
+    for repaired in repaired_results {
+        if let Some(slot) = results
+            .iter_mut()
+            .find(|result| result.requirement_id == repaired.requirement_id)
+        {
+            *slot = repaired;
+        }
+    }
+    results
 }
 
 /// 把场景合并为一个动作序列(每场景前 goto+等待以隔离状态,结尾截图),
@@ -430,6 +574,7 @@ fn split_scenario_results(
                 expected_observation: scenario.expected_observation.clone(),
                 success,
                 screenshot,
+                repaired: false,
                 steps,
             }
         })
@@ -441,6 +586,22 @@ fn finish_playwright(
     scenarios: Vec<ScenarioResult>,
     diagnostics: &mut Vec<BrowserDiagnostic>,
 ) -> ExecutionOutcome {
+    finish_playwright_with(
+        evidence,
+        scenarios,
+        diagnostics,
+        &std::collections::HashSet::new(),
+    )
+}
+
+/// `forgiven`:第一次执行中失败、但所在场景已被修复回路修复并通过的动作下标——
+/// 它们是"场景缺陷"而非应用缺陷,降为 Info 而不是 Error(ROADMAP 1.8)。
+fn finish_playwright_with(
+    evidence: PlaywrightEvidence,
+    scenarios: Vec<ScenarioResult>,
+    diagnostics: &mut Vec<BrowserDiagnostic>,
+    forgiven: &std::collections::HashSet<usize>,
+) -> ExecutionOutcome {
     let success = evidence.outcome.success();
     if let Some(fatal) = &evidence.outcome.fatal {
         diagnostics.push(BrowserDiagnostic {
@@ -449,10 +610,18 @@ fn finish_playwright(
         });
     }
     for action in evidence.outcome.actions.iter().filter(|action| !action.ok) {
+        let (severity, suffix) = if forgiven.contains(&action.index) {
+            (
+                BrowserDiagnosticSeverity::Info,
+                " (scenario repaired and re-executed successfully)",
+            )
+        } else {
+            (BrowserDiagnosticSeverity::Error, "")
+        };
         diagnostics.push(BrowserDiagnostic {
-            severity: BrowserDiagnosticSeverity::Error,
+            severity,
             message: format!(
-                "Action {} ({}) failed: {}",
+                "Action {} ({}) failed: {}{suffix}",
                 action.index,
                 action.action,
                 action.detail.as_deref().unwrap_or("no detail")
@@ -805,7 +974,111 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{BrowserOptions, extract_title, is_supported_probe_url, run_browser_plan};
+    use super::{
+        BrowserOptions, ScenarioResult, ScenarioStepReport, collect_broken_scenarios,
+        extract_title, is_supported_probe_url, run_browser_plan,
+    };
+    use crate::playwright::{FailureSnapshot, PageSnapshot, PlaywrightAction, PlaywrightOutcome};
+    use crate::scenario::Scenario;
+
+    fn scenario_with(steps: Vec<PlaywrightAction>) -> Scenario {
+        Scenario {
+            requirement_id: "REQ-001".to_owned(),
+            title: "添加任务".to_owned(),
+            expected_observation: "任务出现在列表中".to_owned(),
+            steps,
+        }
+    }
+
+    fn result_with(steps: Vec<(bool, Option<&str>)>) -> ScenarioResult {
+        ScenarioResult {
+            requirement_id: "REQ-001".to_owned(),
+            title: "添加任务".to_owned(),
+            expected_observation: "任务出现在列表中".to_owned(),
+            success: steps.iter().all(|(ok, _)| *ok),
+            screenshot: None,
+            repaired: false,
+            steps: steps
+                .into_iter()
+                .map(|(ok, detail)| ScenarioStepReport {
+                    action: "step".to_owned(),
+                    target: "#x".to_owned(),
+                    ok,
+                    detail: detail.map(str::to_owned),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn classifies_operational_failure_as_broken_with_failure_snapshot() {
+        let scenarios = vec![scenario_with(vec![
+            PlaywrightAction::Click {
+                selector: "#add-task-btn".to_owned(),
+            },
+            PlaywrightAction::ExpectText {
+                selector: "#task-list".to_owned(),
+                text: "写周报".to_owned(),
+            },
+        ])];
+        // click(用户步骤 0,绝对下标 = start 0 + 前置 2)失败,断言未执行。
+        let results = vec![result_with(vec![
+            (false, Some("#add-task-btn timeout")),
+            (false, None),
+        ])];
+        let outcome = PlaywrightOutcome {
+            failure_snapshots: vec![FailureSnapshot {
+                index: 2,
+                snapshot: PageSnapshot {
+                    title: Some("FocusBoard".to_owned()),
+                    interactive: Vec::new(),
+                },
+            }],
+            ..Default::default()
+        };
+
+        let broken = collect_broken_scenarios(&scenarios, &results, &[(0, 5)], &outcome);
+
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].failed_step, 0);
+        assert_eq!(broken[0].failed_detail, "#add-task-btn timeout");
+        assert!(broken[0].page_at_failure.is_some());
+    }
+
+    #[test]
+    fn assertion_failure_is_defect_evidence_not_broken() {
+        let scenarios = vec![scenario_with(vec![
+            PlaywrightAction::Click {
+                selector: "#add-task-btn".to_owned(),
+            },
+            PlaywrightAction::ExpectText {
+                selector: "#task-list".to_owned(),
+                text: "写周报".to_owned(),
+            },
+        ])];
+        // 操作走通,断言失败 → 是缺陷证据,不进修复回路。
+        let results = vec![result_with(vec![
+            (true, Some("clicked")),
+            (false, Some("text does not contain 写周报")),
+        ])];
+        let outcome = PlaywrightOutcome::default();
+
+        let broken = collect_broken_scenarios(&scenarios, &results, &[(0, 5)], &outcome);
+        assert!(broken.is_empty());
+    }
+
+    #[test]
+    fn never_ran_steps_are_not_broken() {
+        let scenarios = vec![scenario_with(vec![PlaywrightAction::Click {
+            selector: "#add-task-btn".to_owned(),
+        }])];
+        // detail=None 说明步骤根本没执行(前置失败/执行器中断),不修复。
+        let results = vec![result_with(vec![(false, None)])];
+        let outcome = PlaywrightOutcome::default();
+
+        let broken = collect_broken_scenarios(&scenarios, &results, &[(0, 4)], &outcome);
+        assert!(broken.is_empty());
+    }
 
     #[tokio::test]
     async fn browser_dry_run_builds_action_plan() {

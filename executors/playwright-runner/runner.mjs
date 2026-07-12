@@ -258,6 +258,16 @@ async function main() {
         path: result.path,
         attempts: result.attempts,
       });
+      if (!result.ok) {
+        // 失败时 DOM 快照:供执行级修复回路把"失败当刻的页面状态"回喂 LLM(ROADMAP 1.8)。
+        const failureSnapshot = await collectSnapshot(page);
+        emit({
+          type: "failure_snapshot",
+          index,
+          title: failureSnapshot.title,
+          interactive: failureSnapshot.interactive,
+        });
+      }
     }
 
     const snapshot = await collectSnapshot(page);
